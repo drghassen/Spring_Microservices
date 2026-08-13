@@ -1,74 +1,121 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
     <modelVersion>4.0.0</modelVersion>
+
+    <!-- ========================================================= -->
+    <!-- PARENT                                                    -->
+    <!-- ========================================================= -->
+
     <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.4.0</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <groupId>org.springboot</groupId>
+        <artifactId>spring_project</artifactId>
+        <version>1.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
-    <groupId>org.springboot</groupId>
+
+    <!-- ========================================================= -->
+    <!-- PROJECT                                                   -->
+    <!-- ========================================================= -->
+
     <artifactId>config-server</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+
     <name>config-server</name>
-    <description>config-server</description>
-    <url/>
-    <licenses>
-        <license/>
-    </licenses>
-    <developers>
-        <developer/>
-    </developers>
-    <scm>
-        <connection/>
-        <developerConnection/>
-        <tag/>
-        <url/>
-    </scm>
-    <properties>
-        <java.version>17</java.version>
-        <spring-cloud.version>2024.0.0</spring-cloud.version>
-    </properties>
+    <description>Config Server</description>
+
+    <!-- ========================================================= -->
+    <!-- DEPENDENCIES                                              -->
+    <!-- ========================================================= -->
+
     <dependencies>
+
+        <!-- ===================================================== -->
+        <!-- Spring Boot Actuator                                  -->
+        <!-- ===================================================== -->
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+
+        <!-- ===================================================== -->
+        <!-- Spring Cloud Config Server                            -->
+        <!-- ===================================================== -->
+        <!--
+            Le Config Server utilise le backend Native :
+
+                spring.profiles.active=native
+                classpath:/configs
+
+            Aucun repository Git n'est utilisé dans cette architecture.
+            On exclut donc les modules JGit afin de ne pas embarquer
+            le support Git/SSH/HTTP inutile dans l'image runtime.
+        -->
+
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-config-server</artifactId>
+
+            <exclusions>
+                <exclusion>
+                    <groupId>org.eclipse.jgit</groupId>
+                    <artifactId>org.eclipse.jgit</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.eclipse.jgit</groupId>
+                    <artifactId>org.eclipse.jgit.http.apache</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.eclipse.jgit</groupId>
+                    <artifactId>org.eclipse.jgit.ssh.apache</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- ===================================================== -->
+        <!-- Micrometer / Prometheus                               -->
+        <!-- ===================================================== -->
+
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-config-server</artifactId>
-        </dependency>
+
+        <!-- ===================================================== -->
+        <!-- Tests                                                  -->
+        <!-- ===================================================== -->
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
     </dependencies>
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.cloud</groupId>
-                <artifactId>spring-cloud-dependencies</artifactId>
-                <version>${spring-cloud.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
+
+    <!-- ========================================================= -->
+    <!-- BUILD                                                     -->
+    <!-- ========================================================= -->
 
     <build>
+
         <plugins>
+
+            <!-- ================================================= -->
+            <!-- Spring Boot Maven Plugin                           -->
+            <!-- ================================================= -->
+
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+
         </plugins>
+
     </build>
 
 </project>

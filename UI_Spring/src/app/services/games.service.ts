@@ -3,13 +3,14 @@ import {Inject, Injectable, PLATFORM_ID} from '@angular/core';
 import {BehaviorSubject, Observable, Subject} from "rxjs";
 import {isPlatformBrowser} from "@angular/common";
 import { environment } from '../../environments/environment';
+import {AuthService} from "./auth.service";
 
 @Injectable({
   providedIn: 'root'
 })
 export class GamesService {
 
-  constructor(private http:HttpClient) {
+  constructor(private http:HttpClient, private _auth:AuthService) {
   }
 
   private cart: any[] = [];
@@ -18,14 +19,18 @@ export class GamesService {
   private gameUrl = environment.apiUrl+'/games';
   private gameAdminUrl = environment.apiUrl+'/game';
   private categoryUrl = environment.apiUrl+'/category';
-  token = localStorage.getItem('token');
+
+  private authHeaders(contentType = true){
+    const headers = this._auth.getAuthorizationHeaders();
+    return new HttpHeaders(contentType ? {
+      ...headers,
+      'Content-Type': 'application/json',
+    } : headers);
+  }
 
   // CATEGORY
   deleteCat(id:any){
-    const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
-      'Content-Type': 'application/json',
-    });
+    const headers = this.authHeaders();
     return this.http.delete(this.categoryUrl+'/admin/'+id,{headers})
   }
 
@@ -36,36 +41,24 @@ export class GamesService {
 
 
   addCategory(category:any){
-    const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
-      'Content-Type': 'application/json',
-    });
+    const headers = this.authHeaders();
     return this.http.post(this.categoryUrl+'/admin',category,{headers})
   }
 
 
   updateCat(id:any,category:any){
-    const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
-      'Content-Type': 'application/json',
-    });
+    const headers = this.authHeaders();
     return this.http.put(this.categoryUrl+'/admin/'+id,category,{headers})
   }
 
   getCategoryById(id:any){
-    const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
-      'Content-Type': 'application/json',
-    });
+    const headers = this.authHeaders();
     return this.http.get(this.categoryUrl+'/admin/'+id,{headers})
   }
 
 
   getCategory(){
-    const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
-      'Content-Type': 'application/json',
-    });
+    const headers = this.authHeaders();
     return this.http.get(this.categoryUrl+'/admin',{headers})
   }
 
@@ -98,10 +91,7 @@ export class GamesService {
 //GAMES ROUTES
 
   deleteGame(id:any){
-    const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
-      'Content-Type': 'application/json',
-    });
+    const headers = this.authHeaders();
     return this.http.delete(this.gameAdminUrl+'/admin/'+id,{headers})
   }
 
@@ -111,18 +101,12 @@ export class GamesService {
   //CART METHOS !!!!!!
 
   modifyGameById(id:any,game:any){
-    const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
-      'Content-Type': 'application/json',
-    });
+    const headers = this.authHeaders();
     return this.http.put(this.gameAdminUrl+'/admin/'+id,game,{headers})
   }
 
   findByName(name: string, page: number, size: number): Observable<any>{
-    const headers = new HttpHeaders({
-      'Authorization': `Bearer ${localStorage.getItem('token')}`,
-      'Content-Type': 'application/json'
-    });
+    const headers = this.authHeaders();
 
     let params = new HttpParams()
       .set('page', page.toString())
@@ -135,9 +119,7 @@ export class GamesService {
   }
 
   postGame(game:any){
-    const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`
-    });
+    const headers = this.authHeaders(false);
     return this.http.post(this.gameAdminUrl+'/admin',game,{headers})
   }
 }

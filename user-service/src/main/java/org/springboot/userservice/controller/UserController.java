@@ -7,7 +7,6 @@ import org.springboot.userservice.request.UserRequest;
 import org.springboot.userservice.services.UserService;
 import org.springboot.userservice.user.ResponseMapper;
 import org.springboot.userservice.user.UserApp;
-import org.springframework.data.repository.query.Param;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -16,7 +15,6 @@ import org.springframework.core.io.Resource;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/users")

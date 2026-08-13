@@ -1,67 +1,55 @@
 package org.springboot.gateway;
 
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.Test;
 import org.springboot.gateway.config.GatewayConfig;
-import org.springboot.gateway.filter.JwtAuthenticationFilter;
 import org.springboot.gateway.filter.RoleAssignmentFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.gateway.route.RouteLocator;
 import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 class GatewayRoutesTests {
 
-	@Autowired
-	private JwtAuthenticationFilter jwtAuthenticationFilter;
+    @Autowired
+    private GatewayConfig gatewayConfig;
 
-	@Autowired
-	private RouteLocatorBuilder routeLocatorBuilder;
+    @Autowired
+    private RouteLocatorBuilder routeLocatorBuilder;
 
-	@Test
-	void shouldDefineRoutesCorrectly() {
-		// Arrange
-		GatewayConfig gatewayConfig = new GatewayConfig(jwtAuthenticationFilter);
+    @Test
+    void shouldDefineRoutesCorrectly() {
 
-		// Act
-		RouteLocator routeLocator = gatewayConfig.routes(routeLocatorBuilder);
+        // Act
+        RouteLocator routeLocator = gatewayConfig.routes(routeLocatorBuilder);
 
-		// Assert
-		assertThat(routeLocator).isNotNull();
+        // Assert
+        assertThat(routeLocator).isNotNull();
 
-		var routes = routeLocator.getRoutes().collectList().block();
-		assertThat(routes).isNotNull();
-		assertThat(routes).hasSizeGreaterThan(0);
+        var routes = routeLocator.getRoutes().collectList().block();
 
-		assertThat(routes)
-				.anyMatch(route -> route.getId().equals("user-service") &&
-						route.getUri().toString().equals("lb://user-service") &&
-						route.getFilters().stream()
-								.anyMatch(filter -> filter.toString().contains(RoleAssignmentFilter.class.getSimpleName())));
+        var securedRoutes = routes.stream()
+                .filter(route -> route.getFilters().stream()
+                        .anyMatch(filter -> filter.toString()
+                                .contains(RoleAssignmentFilter.class.getSimpleName())))
+                .toList();
 
-		assertThat(routes)
-				.anyMatch(route -> route.getId().equals("games-service") &&
-						route.getUri().toString().equals("lb://games-service") &&
-						route.getFilters().stream()
-								.anyMatch(filter -> filter.toString().contains(RoleAssignmentFilter.class.getSimpleName())));
-
-		assertThat(routes)
-				.anyMatch(route -> route.getId().equals("order-service") &&
-						route.getUri().toString().equals("lb://order-service") &&
-						route.getFilters().stream()
-								.anyMatch(filter -> filter.toString().contains(RoleAssignmentFilter.class.getSimpleName())));
-		assertThat(routes)
-				.anyMatch(route -> route.getId().equals("payment-service") &&
-						route.getUri().toString().equals("lb://payment-service") &&
-						route.getFilters().stream()
-								.anyMatch(filter -> filter.toString().contains(RoleAssignmentFilter.class.getSimpleName())));
-
-		assertThat(routes)
-				.anyMatch(route -> route.getId().equals("library-service") &&
-						route.getUri().toString().equals("lb://library-service") &&
-						route.getFilters().stream()
-								.anyMatch(filter -> filter.toString().contains(RoleAssignmentFilter.class.getSimpleName())));
-	}
-
+        assertThat(securedRoutes)
+                .hasSize(10)
+                .extracting(route -> route.getPredicate().toString())
+                .containsExactlyInAnyOrder(
+                        "Paths: [/api/v1/users/**], match trailing slash: true",
+                        "Paths: [/api/v1/user/admin/**], match trailing slash: true",
+                        "Paths: [/api/v1/games/purchase], match trailing slash: true",
+                        "Paths: [/api/v1/game/admin/**], match trailing slash: true",
+                        "Paths: [/api/v1/category/admin/**], match trailing slash: true",
+                        "Paths: [/api/v1/orders/**], match trailing slash: true",
+                        "Paths: [/api/v1/order/admin/**], match trailing slash: true",
+                        "Paths: [/api/v1/order-lines/**], match trailing slash: true",
+                        "Paths: [/api/v1/payments/**], match trailing slash: true",
+                        "Paths: [/api/v1/library/**], match trailing slash: true"
+                );
+    }
 }

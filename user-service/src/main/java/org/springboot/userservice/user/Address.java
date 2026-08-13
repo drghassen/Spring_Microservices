@@ -1,7 +1,6 @@
 package org.springboot.userservice.user;
 
 import lombok.*;
-import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.validation.annotation.Validated;
 
 @AllArgsConstructor

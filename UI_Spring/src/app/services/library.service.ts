@@ -8,14 +8,12 @@ import { environment } from '../../environments/environment';
 })
 export class LibraryService {
 
-  constructor(private http:HttpClient) { }
+  constructor(private http:HttpClient, private auth:AuthService) { }
   private url = environment.apiUrl+'/library'
-
-  token = localStorage.getItem('token');
 
   getAllGames(username:any){
     const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
+      ...this.auth.getAuthorizationHeaders(),
       'Content-Type': 'application/json',
     });
 

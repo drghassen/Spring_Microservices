@@ -14,7 +14,7 @@ spring:
       port: 27017
       database: library
       authentication-database: admin
-      auto-index-creation: true
+      auto-index-creation: ${MONGO_AUTO_INDEX_CREATION:false}
 springdoc:
   api-docs:
     path: /library/v3/api-docs

@@ -1,19 +1,19 @@
 import { Injectable } from '@angular/core';
 import {HttpClient, HttpHeaders} from "@angular/common/http";
 import { environment } from '../../environments/environment';
+import {AuthService} from "./auth.service";
 
 @Injectable({
   providedIn: 'root'
 })
 export class OrdersService {
 
-  constructor(private http:HttpClient) { }
+  constructor(private http:HttpClient, private _auth:AuthService) { }
   private url=environment.apiUrl+'/orders'
-  token = localStorage.getItem('token');
 
   createOrder(order:any){
     const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
+      ...this._auth.getAuthorizationHeaders(),
     });
 
     return this.http.post(`${this.url}`,order,{headers});
@@ -21,7 +21,7 @@ export class OrdersService {
 
   getUserOrders(username:any){
     const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
+      ...this._auth.getAuthorizationHeaders(),
     });
     return this.http.get(`${this.url}/${username}`,{headers});
   }

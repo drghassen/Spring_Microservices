@@ -8,7 +8,14 @@ eureka:
 uploads:
   dir: ${UPLOADS_USER_DIR:user-service/src/main/resources/static/uploads/user}
 
+jwt:
+  secret: ${JWT_SECRET:${SECRET_KEY:413F4428472B4BB6250655368566D5970337336763979244226452948404D6351}}
+
 spring:
+  servlet:
+    multipart:
+      max-file-size: ${MAX_FILE_SIZE:10MB}
+      max-request-size: ${MAX_REQUEST_SIZE:10MB}
   data:
     mongodb:
       username: ${MONGO_DB_USER:achraf}
@@ -17,7 +24,7 @@ spring:
       port: 27017
       database: users
       authentication-database: admin
-      auto-index-creation: true
+      auto-index-creation: ${MONGO_AUTO_INDEX_CREATION:false}
 
 application:
   config:

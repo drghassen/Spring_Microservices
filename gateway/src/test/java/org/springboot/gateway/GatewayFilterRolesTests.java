@@ -1,6 +1,6 @@
 package org.springboot.gateway;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.springboot.gateway.filter.RoleAssignmentFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -12,14 +12,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 @SpringBootTest
-public class GatewayFilterRoles {
+public class GatewayFilterRolesTests {
 
     @Autowired
     private RoleAssignmentFilter roleAssignmentFilter;
+
     @Test
     public void testFilter() {
         // Mock ServerWebExchange and GatewayFilterChain
@@ -40,8 +41,8 @@ public class GatewayFilterRoles {
         Mono<Void> result = filter.filter(exchange, chain);
 
         // Verify behavior
-        assertEquals(requiredRoles, attributes.get("requiredRoles")); // Check the attribute
-        verify(chain, times(1)).filter(exchange); // Ensure chain.filter is called
-        assertEquals(Mono.empty(), result); // Ensure the returned Mono is as expected
+        assertEquals(requiredRoles, attributes.get("requiredRoles"));
+        verify(chain, times(1)).filter(exchange);
+        assertEquals(Mono.empty(), result);
     }
 }

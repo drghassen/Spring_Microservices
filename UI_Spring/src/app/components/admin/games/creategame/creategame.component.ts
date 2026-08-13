@@ -9,7 +9,7 @@ import {GamesService} from "../../../../services/games.service";
   styleUrl: './creategame.component.css'
 })
 export class CreategameComponent implements OnInit{
-  err=undefined;
+  err:string | undefined = undefined;
   categories:any;
   token:any;
   success:any;
@@ -30,6 +30,9 @@ export class CreategameComponent implements OnInit{
       this._game.getCategory().subscribe(
         res=>{
           this.categories=res
+          if (!this.game.categoryId && this.categories?.length) {
+            this.game.categoryId = this.categories[0].id;
+          }
           // console.log(this.categories)
           // console.log(res)
         },
@@ -41,6 +44,9 @@ export class CreategameComponent implements OnInit{
       this._game.getCategory().subscribe(
         res=>{
           this.categories=res
+          if (!this.game.categoryId && this.categories?.length) {
+            this.game.categoryId = this.categories[0].id;
+          }
           // console.log(this.categories)
           // console.log(res)
         },
@@ -67,6 +73,16 @@ export class CreategameComponent implements OnInit{
     })
   }
   addGame(){
+    if (!this.game.categoryId) {
+      this.err = "Please create/select a category before adding a game.";
+      return;
+    }
+
+    if (!this.image) {
+      this.err = "Please select a game image.";
+      return;
+    }
+
     let fd=new FormData()
     fd.append('name',this.game.name)
     fd.append('description',this.game.description)
@@ -83,7 +99,7 @@ export class CreategameComponent implements OnInit{
           this.router.navigate(['/home']);
         }
         ,err=> {
-          this.err=err;
+          this.err=err?.error?.detail || 'Error occured!';
         }
       )
   }

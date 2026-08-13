@@ -1,6 +1,5 @@
 package org.springboot.userservice.repository;
 
-import org.springboot.userservice.user.Role;
 import org.springboot.userservice.user.UserApp;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;

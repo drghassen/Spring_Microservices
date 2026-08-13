@@ -1,6 +1,6 @@
 package org.springboot.gateway;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.springboot.gateway.filter.JwtAuthenticationFilter;
 import org.springboot.gateway.util.JwtUtil;
 import org.springframework.boot.test.context.SpringBootTest;

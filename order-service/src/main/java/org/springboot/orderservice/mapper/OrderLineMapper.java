@@ -1,8 +1,8 @@
 package org.springboot.orderservice.mapper;
 
 import org.springboot.orderservice.order.OrderApp;
-import org.springboot.orderservice.orderLine.OrderLine;
-import org.springboot.orderservice.orderLine.OrderLineRequestWithoutId;
+import org.springboot.orderservice.orderline.OrderLine;
+import org.springboot.orderservice.orderline.OrderLineRequestWithoutId;
 import org.springframework.stereotype.Service;
 
 @Service

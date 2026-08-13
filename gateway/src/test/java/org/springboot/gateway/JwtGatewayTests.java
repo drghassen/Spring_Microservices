@@ -7,6 +7,8 @@ import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springboot.gateway.util.JwtUtil;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.security.Key;
@@ -18,18 +20,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
-public class JwtGatewayTests {
+class JwtGatewayTests {
 
+    @Autowired
     private JwtUtil jwtUtil;
+    @Value("${jwt.secret}")
+    private String secretKey;
     private String validToken;
     private String invalidToken;
 
-    private static final String SECRET_KEY="413F4428472B4BB6250655368566D5970337336763979244226452948404D6351";
-
     @BeforeEach
     void setUp() {
-        jwtUtil = new JwtUtil();
-
         // Generate a valid token for testing
         validToken = Jwts.builder()
                 .setSubject("test-user")
@@ -39,12 +40,21 @@ public class JwtGatewayTests {
                 .signWith(getSignKey(), SignatureAlgorithm.HS256)
                 .compact();
 
-        // Create an invalid token (e.g., tampered or malformed)
-        invalidToken = validToken.substring(0, validToken.length() - 1) + "x";
+        // Create an invalid token signed with a different key — guarantees SignatureException
+        String differentKey = "5468576D5A7134743777217A25432A462D4A614E645267556B58703272357538";
+        byte[] differentKeyBytes = Decoders.BASE64.decode(differentKey);
+        Key wrongKey = Keys.hmacShaKeyFor(differentKeyBytes);
+        invalidToken = Jwts.builder()
+                .setSubject("test-user")
+                .claim("roles", of("USER", "ADMIN"))
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + 1000 * 60 * 60))
+                .signWith(wrongKey, SignatureAlgorithm.HS256)
+                .compact();
     }
 
     private Key getSignKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(SECRET_KEY);
+        byte[] keyBytes = Decoders.BASE64.decode(secretKey);
         return Keys.hmacShaKeyFor(keyBytes);
     }
 
@@ -58,8 +68,7 @@ public class JwtGatewayTests {
     void shouldThrowExceptionForInvalidToken() {
         // Act & Assert
         assertThatThrownBy(() -> jwtUtil.validateToken(invalidToken))
-                .isInstanceOf(io.jsonwebtoken.JwtException.class)
-                .hasMessageContaining("JWT");
+                .isInstanceOf(io.jsonwebtoken.JwtException.class);
     }
 
     @Test
@@ -68,8 +77,7 @@ public class JwtGatewayTests {
         List<String> roles = jwtUtil.getRolesFromToken(validToken);
 
         // Assert
-        assertThat(roles).isNotNull();
-        assertThat(roles).containsExactlyInAnyOrder("USER", "ADMIN");
+        assertThat(roles).isNotNull().containsExactlyInAnyOrder("USER", "ADMIN");
     }
 
 

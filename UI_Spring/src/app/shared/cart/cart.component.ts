@@ -11,7 +11,7 @@ import {OrdersService} from "../../services/orders.service";
 export class CartComponent implements OnInit{
   constructor(private _game:GamesService,private _auth:AuthService,private _orders:OrdersService) {
   }
-  username?:'';
+  username?:string;
   error:any;
   gamesWillPurchase:any=[];
   totalAmount:any;
@@ -32,7 +32,7 @@ export class CartComponent implements OnInit{
 
   ngOnInit() {
     if(this._auth.isLoggedIn()){
-      this.username=this._auth.getUserDataFromToken().sub
+      this.username=this._auth.getUsername() ?? undefined;
     }else{
       this.username=undefined
     }

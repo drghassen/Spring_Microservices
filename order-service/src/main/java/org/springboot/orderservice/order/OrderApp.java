@@ -2,7 +2,7 @@ package org.springboot.orderservice.order;
 
 import jakarta.persistence.*;
 import lombok.*;
-import org.springboot.orderservice.orderLine.OrderLine;
+import org.springboot.orderservice.orderline.OrderLine;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;

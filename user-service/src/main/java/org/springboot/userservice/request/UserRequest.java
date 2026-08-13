@@ -2,7 +2,6 @@ package org.springboot.userservice.request;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotNull;
-import org.springboot.userservice.user.Address;
 
 
 //this record represents user Body and validation for conditions

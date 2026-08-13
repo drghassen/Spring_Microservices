@@ -1,9 +1,5 @@
 package org.springboot.orderservice.services;
-
-
-
 import jakarta.persistence.EntityNotFoundException;
-import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +13,7 @@ import org.springboot.orderservice.mapper.OrderMapper;
 import org.springboot.orderservice.order.OrderApp;
 import org.springboot.orderservice.order.OrderRequest;
 import org.springboot.orderservice.order.ResponseOrder;
-import org.springboot.orderservice.orderLine.OrderLineRequestWithoutId;
+import org.springboot.orderservice.orderline.OrderLineRequestWithoutId;
 import org.springboot.orderservice.payment.PaymentClient;
 import org.springboot.orderservice.payment.PaymentRequest;
 import org.springboot.orderservice.repository.OrderRepository;
@@ -25,9 +21,6 @@ import org.springboot.orderservice.user.UserClient;
 import org.springframework.stereotype.Service;
 import jakarta.transaction.Transactional;
 import java.util.List;
-
-import static jakarta.xml.bind.DatatypeConverter.parseString;
-import static java.lang.Double.parseDouble;
 
 @Service
 @RequiredArgsConstructor
@@ -64,8 +57,8 @@ public class OrderService {
 
         for (PurchaseResponse purchaseResponse : purchasedGames) {
              amount = amount + purchaseResponse.price();
-             logger.info(""+amount);
-             logger.info(""+purchaseResponse.price());
+             logger.info("Purchased total amount {}", amount);
+             logger.info("Purchased game price {}", purchaseResponse.price());
         }
 
         var order = this.repository.save(mapper.toOrder(request,amount));
@@ -91,7 +84,7 @@ public class OrderService {
 
         paymentClient.requestOrderPayment(paymentRequest,token);
         libraryClient.purchaseLibrary(purchaseLibrary,token);
-        return new ResponseOrder("Order created with ID: "+ order.getId());
+        return new ResponseOrder(String.format("Order created with ID: %d", order.getId()));
     }
 
     public List<OrderApp> findAllOrders() {

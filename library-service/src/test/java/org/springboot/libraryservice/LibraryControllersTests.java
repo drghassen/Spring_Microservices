@@ -63,7 +63,7 @@ class LibraryControllersTests {
     }
 
     @Test
-    public void libraryCreation() throws Exception {
+    void libraryCreation() throws Exception {
         doNothing().when(libraryService).createLibrary(any());
         ResultActions response = mockMvc.perform(post(BASE_URL)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -72,7 +72,7 @@ class LibraryControllersTests {
         response.andExpect(status().isOk());
     }
     @Test
-    public void libraryUpdate() throws Exception {
+    void libraryUpdate() throws Exception {
         libraryCreation();
         doNothing().when(libraryService).updateLibrary(any());
         ResultActions response = mockMvc.perform(put(BASE_URL+"/purchase")
@@ -82,7 +82,7 @@ class LibraryControllersTests {
         response.andExpect(status().isOk());
     }
     @Test
-    public void libraryDelete() throws Exception {
+    void libraryDelete() throws Exception {
         libraryUpdate();
         when(libraryService.deleteLibrary(any())).thenReturn("true");  // Or whatever value deleteLibrary() returns
         ResultActions response = mockMvc.perform(delete(BASE_URL+"/"+userApp.username())
@@ -91,7 +91,7 @@ class LibraryControllersTests {
     }
 
     @Test
-    public void libraryList() throws Exception {
+    void libraryList() throws Exception {
         libraryUpdate();
         BDDMockito.given(libraryService.getLibrary(any())).willReturn(libraryApp);
         ResultActions response = mockMvc.perform(get(BASE_URL)

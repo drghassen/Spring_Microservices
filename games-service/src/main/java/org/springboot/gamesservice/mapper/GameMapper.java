@@ -1,7 +1,6 @@
 package org.springboot.gamesservice.mapper;
 
 
-import org.springboot.gamesservice.category.CategoryApp;
 import org.springboot.gamesservice.games.*;
 import org.springframework.stereotype.Service;
 
@@ -15,11 +14,6 @@ public class GameMapper {
                 .description(request.description())
                 .avaiblity(request.avaiblity())
                 .price(request.price())
-                .category(
-                        CategoryApp.builder()
-                                .id(request.categoryId())
-                                .build()
-                )
                 .build();
     }
 

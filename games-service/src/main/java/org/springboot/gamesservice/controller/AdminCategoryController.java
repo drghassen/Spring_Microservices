@@ -1,7 +1,6 @@
 package org.springboot.gamesservice.controller;
 
 
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springboot.gamesservice.category.CategoryApp;
 import org.springboot.gamesservice.category.CategoryRequest;

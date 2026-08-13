@@ -10,16 +10,17 @@ import {Observable} from "rxjs";
   styleUrl: './header.component.css',
 })
 export class HeaderComponent implements OnInit{
-  username:any
+  username:string | null = null;
   constructor(public _auth:AuthService,private router:Router){
   }
   ngOnInit(
   ) {
-    this.username=this._auth.getUserDataFromToken().sub
+    this.username=this._auth.getUsername();
   }
 
   logout(){
-    localStorage.removeItem('token');
+    this._auth.logout();
+    this.username = null;
     this.router.navigate(['/login']);
   }
 

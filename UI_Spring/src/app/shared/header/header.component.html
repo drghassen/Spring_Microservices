@@ -27,13 +27,13 @@
               <li class="nav-item @@about">
                 <a class="nav-link" [routerLink]="['/about']">About</a>
               </li>
-              <li class="nav-item @@login" *ngIf="_auth.isLoggedIn()==true && _auth.getUserDataFromToken().sub=='admin'">
+              <li class="nav-item @@login" *ngIf="_auth.isAdmin()">
                 <a class="nav-link" [routerLink]="['/games']">Games</a>
               </li>
-              <li class="nav-item @@login" *ngIf="_auth.isLoggedIn()==true && _auth.getUserDataFromToken().sub=='admin'">
+              <li class="nav-item @@login" *ngIf="_auth.isAdmin()">
                 <a class="nav-link" [routerLink]="['/categories']">Categories</a>
               </li>
-              <li class="nav-item @@login" *ngIf="_auth.isLoggedIn()==true && _auth.getUserDataFromToken().sub=='admin'">
+              <li class="nav-item @@login" *ngIf="_auth.isAdmin()">
                 <a class="nav-link" [routerLink]="['/users']">Users</a>
               </li>
               <li class="nav-item @@login" *ngIf="_auth.isLoggedIn()==false">
@@ -43,13 +43,13 @@
                 <a class="nav-link" [routerLink]="['/register']">Register</a>
               </li>
               <li class="nav-item @@account" *ngIf="_auth.isLoggedIn()==true">
-                <a class="nav-link" [routerLink]="['/user',_auth.getUserDataFromToken().sub]">My Account</a>
+                <a class="nav-link" [routerLink]="['/user',_auth.getUsername()]">My Account</a>
               </li>
               <li class="nav-item @@inventory" *ngIf="_auth.isLoggedIn()==true">
-                <a class="nav-link" [routerLink]="['/inventory',_auth.getUserDataFromToken().sub]">Inventory</a>
+                <a class="nav-link" [routerLink]="['/inventory',_auth.getUsername()]">Inventory</a>
               </li>
               <li class="nav-item @@orders" *ngIf="_auth.isLoggedIn()==true">
-                <a class="nav-link" [routerLink]="['/orders',_auth.getUserDataFromToken().sub]">Orders</a>
+                <a class="nav-link" [routerLink]="['/orders',_auth.getUsername()]">Orders</a>
               </li>
               <li class="nav-item @@logout" *ngIf="_auth.isLoggedIn()==true">
                 <a class="nav-link" (click)="logout()">Log out</a>

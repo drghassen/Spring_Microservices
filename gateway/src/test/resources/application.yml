@@ -6,3 +6,31 @@ spring:
 
 server:
   port: 8020
+
+jwt:
+  secret: 413F4428472B4BB6250655368566D5970337336763979244226452948404D6351
+
+roles:
+  admin: ADMIN
+  user: USER
+
+services:
+  user-service:
+    name: user-service
+    uri: http://localhost:8081
+
+  payment-service:
+    name: payment-service
+    uri: http://localhost:8085
+
+  order-service:
+    name: order-service
+    uri: http://localhost:8083
+
+  games-service:
+    name: games-service
+    uri: http://localhost:8082
+
+  library-service:
+    name: library-service
+    uri: http://localhost:8084

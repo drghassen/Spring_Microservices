@@ -5,5 +5,9 @@ spring:
     name:
       user-service
 
-variables:
-  ${SECRET_KEY:413F4428472B4BB6250655368566D5970337336763979244226452948404D6351}
+application:
+  config:
+    library-url: ${LIBRARY_URL:http://localhost:8222/api/v1/library}
+
+jwt:
+  secret: ${JWT_SECRET:}

@@ -3,7 +3,7 @@ package org.springboot.gamesservice.services;
 
 import jakarta.persistence.EntityNotFoundException;
 import lombok.AllArgsConstructor;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.springboot.gamesservice.category.CategoryApp;
 import org.springboot.gamesservice.category.CategoryRequest;
 import org.springboot.gamesservice.mapper.CategoryMapper;

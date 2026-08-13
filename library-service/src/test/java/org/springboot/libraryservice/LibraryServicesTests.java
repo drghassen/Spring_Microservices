@@ -29,7 +29,7 @@ import static org.mockito.Mockito.*;
 @WebMvcTest
 @AutoConfigureMockMvc(addFilters = false)
 @ExtendWith(MockitoExtension.class)
-public class LibraryServicesTests {
+class LibraryServicesTests {
 
     private static final String BASE_URL = "/api/v1/library";
     private static final String AUTH_HEADER = "Authorization";
@@ -73,15 +73,14 @@ public class LibraryServicesTests {
     }
 
     @Test
-    public void testDeleteLibraryReturnValue() {
+    void testDeleteLibraryReturnValue() {
         when(libraryService.deleteLibrary(userApp.username())).thenReturn("ID");
         String result = libraryService.deleteLibrary(userApp.username());
-        assertThat(result).isNotNull();
-        assertThat(result).isEqualTo("ID");
+        assertThat(result).isNotNull().isEqualTo("ID");
     }
 
     @Test
-    public void testDeleteLibraryReturnWrongValue() {
+    void testDeleteLibraryReturnWrongValue() {
         when(libraryService.deleteLibrary(userApp.username())).thenReturn("ID");
         String result = libraryService.deleteLibrary(userApp.username());
         assertThat(result).isNotNull();
@@ -89,21 +88,21 @@ public class LibraryServicesTests {
     }
 
     @Test
-    public void testGetLibraryReturnValue() {
+    void testGetLibraryReturnValue() {
         when(libraryService.getLibrary(userApp.username())).thenReturn(libraryApp);
         LibraryApp result = libraryService.getLibrary(userApp.username());
         assertTrue(result.equals(libraryApp));
     }
 
     @Test
-    public void testGetLibraryReturnWrongValue(){
+    void testGetLibraryReturnWrongValue(){
         when(libraryService.getLibrary(userApp.username())).thenReturn(libraryApp);
         LibraryApp result = libraryService.getLibrary(userApp.username());
         assertFalse(result.equals(libraryAppWrong));
     }
 
     @Test
-    public void testUpdateLibraryReturnValue() {
+    void testUpdateLibraryReturnValue() {
         libraryService.updateLibrary(purchaseRequest);
         verify(libraryService).updateLibrary(purchaseRequest);
     }

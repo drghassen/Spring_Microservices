@@ -1,137 +1,178 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
     <modelVersion>4.0.0</modelVersion>
+
+    <!-- ============================================================ -->
+    <!-- Parent project                                               -->
+    <!-- ============================================================ -->
     <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.4.0</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <groupId>org.springboot</groupId>
+        <artifactId>spring_project</artifactId>
+        <version>1.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
-    <groupId>org.springboot</groupId>
+
     <artifactId>order-service</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+
     <name>order-service</name>
-    <description>order-service</description>
-    <url/>
-    <licenses>
-        <license/>
-    </licenses>
-    <developers>
-        <developer/>
-    </developers>
-    <scm>
-        <connection/>
-        <developerConnection/>
-        <tag/>
-        <url/>
-    </scm>
-    <properties>
-        <java.version>17</java.version>
-        <spring-cloud.version>2024.0.0</spring-cloud.version>
-    </properties>
+    <description>Order Service</description>
+
+    <!-- ============================================================ -->
+    <!-- Dependencies                                                  -->
+    <!-- ============================================================ -->
     <dependencies>
+
+        <!-- ======================================================== -->
+        <!-- Spring Data JPA                                          -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
+
+        <!-- ======================================================== -->
+        <!-- Actuator                                                 -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+
+        <!-- ======================================================== -->
+        <!-- OpenAPI / Swagger                                        -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
             <version>2.1.0</version>
         </dependency>
+
+        <!-- ======================================================== -->
+        <!-- Prometheus                                               -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
+        <!-- ======================================================== -->
+        <!-- Spring Retry - Security override                         -->
+        <!-- CVE-2026-41710                                           -->
+        <!-- Version 2.0.12 upgraded to 2.0.13                       -->
+        <!-- ======================================================== -->
         <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-api</artifactId>
-            <version>0.11.5</version>
+            <groupId>org.springframework.retry</groupId>
+            <artifactId>spring-retry</artifactId>
+            <version>2.0.13</version>
         </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-impl</artifactId>
-            <version>0.11.5</version>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-jackson</artifactId>
-            <version>0.11.5</version>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
-        </dependency>
+
+        <!-- ======================================================== -->
+        <!-- Validation                                               -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+
+        <!-- ======================================================== -->
+        <!-- Spring Web                                               -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.springframework.boot</groupId>
-                    <artifactId>spring-boot-starter-logging</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-log4j2</artifactId>
-        </dependency>
+
+        <!-- ======================================================== -->
+        <!-- Spring Cloud Config                                      -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-config</artifactId>
         </dependency>
+
+        <!-- ======================================================== -->
+        <!-- Eureka Client                                             -->
+        <!-- ======================================================== -->
+        <!--
+            The Eureka dependency introduces the legacy
+            commons-configuration 1.x dependency.
+
+            This dependency is excluded because it is reported
+            by Trivy for CVE-2025-46392 and CVE-2025-48924.
+        -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-configuration</groupId>
+                    <artifactId>commons-configuration</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
+        <!-- ======================================================== -->
+        <!-- PostgreSQL                                               -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- ======================================================== -->
+        <!-- Lombok                                                    -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
+
+        <!-- ======================================================== -->
+        <!-- Spring Boot Test                                          -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- ======================================================== -->
+        <!-- OpenFeign                                                 -->
+        <!-- ======================================================== -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-fileupload</groupId>
+                    <artifactId>commons-fileupload</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
-    </dependencies>
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.cloud</groupId>
-                <artifactId>spring-cloud-dependencies</artifactId>
-                <version>${spring-cloud.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
+    </dependencies>
+
+    <!-- ============================================================ -->
+    <!-- Build                                                        -->
+    <!-- ============================================================ -->
     <build>
+
         <plugins>
+
+            <!-- ==================================================== -->
+            <!-- Maven Compiler                                        -->
+            <!-- ==================================================== -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+
                 <configuration>
                     <annotationProcessorPaths>
                         <path>
@@ -141,9 +182,14 @@
                     </annotationProcessorPaths>
                 </configuration>
             </plugin>
+
+            <!-- ==================================================== -->
+            <!-- Spring Boot Maven Plugin                              -->
+            <!-- ==================================================== -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+
                 <configuration>
                     <excludes>
                         <exclude>
@@ -153,7 +199,9 @@
                     </excludes>
                 </configuration>
             </plugin>
+
         </plugins>
+
     </build>
 
 </project>

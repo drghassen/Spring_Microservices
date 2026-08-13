@@ -1,34 +1,20 @@
 package org.springboot.userservice;
 
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
+
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @SpringBootTest
 class UserServiceApplicationTests {
 
-	@BeforeAll
-	static void setUpBeforeClass() throws Exception {
+    @Autowired
+    private ApplicationContext applicationContext;
 
-	}
-	@AfterAll
-	static void tearDownAfterClass() throws Exception {
-
-	}
-
-	@BeforeEach
-	void setUp() throws Exception{
-		System.out.println("hello");
-	}
-
-	@AfterEach
-	void tearDown() throws Exception {
-
-	}
-
-	@Test
-	void contextLoads() {
-	}
-
-
-
+    @Test
+    void contextLoads() {
+        assertNotNull(applicationContext);
+    }
 }

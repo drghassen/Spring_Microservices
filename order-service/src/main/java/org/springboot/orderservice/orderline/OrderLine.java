@@ -1,4 +1,4 @@
-package org.springboot.orderservice.orderLine;
+package org.springboot.orderservice.orderline;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;

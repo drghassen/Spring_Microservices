@@ -17,40 +17,40 @@ public class GatewayConfig {
     
         //VARIABLES
         @Value("${roles.admin}")
-        private String ROLE_ADMIN;
+        private String roleAdmin;
 
         @Value("${roles.user}")
-        private String ROLE_USER;
+        private String roleUser;
 
         @Value("${services.user-service.name}")
-        private String USER_SERVICE;
+        private String userService;
 
         @Value("${services.user-service.uri}")
-        private String URI_USER_SERVICE;
+        private String uriUserService;
 
         @Value("${services.payment-service.name}")
-        private String PAYMENT_SERVICE;
+        private String paymentService;
 
         @Value("${services.payment-service.uri}")
-        private String URI_PAYMENT_SERVICE;
+        private String uriPaymentService;
 
         @Value("${services.order-service.name}")
-        private String ORDER_SERVICE;
+        private String orderService;
 
         @Value("${services.order-service.uri}")
-        private String URI_ORDER_SERVICE;
+        private String uriOrderService;
 
         @Value("${services.games-service.name}")
-        private String GAMES_SERVICE;
+        private String gamesService;
 
         @Value("${services.games-service.uri}")
-        private String URI_GAMES_SERVICE;
+        private String uriGamesService;
 
         @Value("${services.library-service.name}")
-        private String LIBRARY_SERVICE;
+        private String libraryService;
 
         @Value("${services.library-service.uri}")
-        private String URI_LIBRARY_SERVICE;
+        private String uriLibraryService;
 
 
 
@@ -62,117 +62,117 @@ public class GatewayConfig {
     public RouteLocator routes(RouteLocatorBuilder builder) {
         return builder.routes()
                 // USER SERVICE ROUTES
-                .route(USER_SERVICE, r -> r.path("/api/v1/users/**")
+                .route(userService, r -> r.path("/api/v1/users/**")
                         .filters(f -> f
-                                .filter(new RoleAssignmentFilter(List.of(ROLE_ADMIN, ROLE_USER)))
+                                .filter(new RoleAssignmentFilter(List.of(roleAdmin, roleUser)))
                                 .filter(filter))
-                        .uri(URI_USER_SERVICE))
+                        .uri(uriUserService))
 
-                .route(USER_SERVICE, r -> r.path("/api/v1/auth/**")
-                        .uri(URI_USER_SERVICE))
+                .route(userService, r -> r.path("/api/v1/auth/**")
+                        .uri(uriUserService))
 
-                .route(USER_SERVICE, r -> r.path("/api/v1/user/admin/**")
+                .route(userService, r -> r.path("/api/v1/user/admin/**")
                         .filters(f -> f
-                                .filter(new RoleAssignmentFilter(List.of(ROLE_ADMIN)))
+                                .filter(new RoleAssignmentFilter(List.of(roleAdmin)))
                                 .filter(filter))
-                        .uri(URI_USER_SERVICE))
+                        .uri(uriUserService))
 
                 //SWAGGER
-                .route(USER_SERVICE, r -> r.path("/users/swagger-ui/**")
-                        .uri(URI_USER_SERVICE))
-                .route(USER_SERVICE, r -> r.path("/users/v3/api-docs/**")
-                        .uri(URI_USER_SERVICE)) // Forward to the user-service
+                .route(userService, r -> r.path("/users/swagger-ui/**")
+                        .uri(uriUserService))
+                .route(userService, r -> r.path("/users/v3/api-docs/**")
+                        .uri(uriUserService)) // Forward to the user-service
 
                 //GAMES SERVICE ROUTES
-                .route(GAMES_SERVICE, r -> r.path("/api/v1/games/purchase")
+                .route(gamesService, r -> r.path("/api/v1/games/purchase")
                         .filters(f -> f
-                                .filter(new RoleAssignmentFilter(List.of(ROLE_ADMIN, ROLE_USER)))
+                                .filter(new RoleAssignmentFilter(List.of(roleAdmin, roleUser)))
                                 .filter(filter))
-                        .uri(URI_GAMES_SERVICE))
+                        .uri(uriGamesService))
 
-                .route(GAMES_SERVICE, r -> r.path("/api/v1/games")
-                        .uri(URI_GAMES_SERVICE))
+                .route(gamesService, r -> r.path("/api/v1/games")
+                        .uri(uriGamesService))
 
-                .route(GAMES_SERVICE, r -> r.path("/api/v1/games/{gameId}/image")
-                        .uri(URI_GAMES_SERVICE))
+                .route(gamesService, r -> r.path("/api/v1/games/{gameId}/image")
+                        .uri(uriGamesService))
 
-                .route(GAMES_SERVICE, r -> r.path("/api/v1/games/pagination")
-                        .uri(URI_GAMES_SERVICE))
+                .route(gamesService, r -> r.path("/api/v1/games/pagination")
+                        .uri(uriGamesService))
 
-                .route(GAMES_SERVICE, r -> r.path("/api/v1/games/{games-id}")
-                        .uri(URI_GAMES_SERVICE))
+                .route(gamesService, r -> r.path("/api/v1/games/{games-id}")
+                        .uri(uriGamesService))
 
-                .route(GAMES_SERVICE, r -> r.path("/api/v1/game/admin/**")
+                .route(gamesService, r -> r.path("/api/v1/game/admin/**")
                         .filters(f -> f
-                                .filter(new RoleAssignmentFilter(List.of(ROLE_ADMIN)))
+                                .filter(new RoleAssignmentFilter(List.of(roleAdmin)))
                                 .filter(filter))
-                        .uri(URI_GAMES_SERVICE))
+                        .uri(uriGamesService))
 
-                .route(GAMES_SERVICE, r -> r.path("/api/v1/category/admin/**")
+                .route(gamesService, r -> r.path("/api/v1/category/admin/**")
                         .filters(f -> f
-                                .filter(new RoleAssignmentFilter(List.of(ROLE_ADMIN)))
+                                .filter(new RoleAssignmentFilter(List.of(roleAdmin)))
                                 .filter(filter))
-                        .uri(URI_GAMES_SERVICE))
+                        .uri(uriGamesService))
 
                 //SWAGGER
-                .route(GAMES_SERVICE, r -> r.path("/games/swagger-ui/**")
-                        .uri(URI_GAMES_SERVICE))
-                .route(GAMES_SERVICE, r -> r.path("/games/v3/api-docs/**")
-                        .uri(URI_GAMES_SERVICE)) // Forward to the user-service
+                .route(gamesService, r -> r.path("/games/swagger-ui/**")
+                        .uri(uriGamesService))
+                .route(gamesService, r -> r.path("/games/v3/api-docs/**")
+                        .uri(uriGamesService)) // Forward to the user-service
 
                 //ORDER SERVICE ROUTES
-                .route(ORDER_SERVICE, r -> r.path("/api/v1/orders/**")
+                .route(orderService, r -> r.path("/api/v1/orders/**")
                         .filters(f -> f
-                                .filter(new RoleAssignmentFilter(List.of(ROLE_ADMIN, ROLE_USER)))
+                                .filter(new RoleAssignmentFilter(List.of(roleAdmin, roleUser)))
                                 .filter(filter))
-                        .uri(URI_ORDER_SERVICE))
+                        .uri(uriOrderService))
 
 
-                .route(ORDER_SERVICE, r -> r.path("/api/v1/order/admin/**")
+                .route(orderService, r -> r.path("/api/v1/order/admin/**")
                         .filters(f -> f
-                                .filter(new RoleAssignmentFilter(List.of(ROLE_ADMIN)))
+                                .filter(new RoleAssignmentFilter(List.of(roleAdmin)))
                                 .filter(filter))
-                        .uri(URI_ORDER_SERVICE))
+                        .uri(uriOrderService))
 
 
-                .route(ORDER_SERVICE, r -> r.path("/api/v1/order-lines/**")
+                .route(orderService, r -> r.path("/api/v1/order-lines/**")
                         .filters(f -> f
-                                .filter(new RoleAssignmentFilter(List.of(ROLE_USER,ROLE_ADMIN)))
+                                .filter(new RoleAssignmentFilter(List.of(roleUser,roleAdmin)))
                                 .filter(filter))
-                        .uri(URI_ORDER_SERVICE))
+                        .uri(uriOrderService))
 
                 //SWAGGER
-                .route(ORDER_SERVICE, r -> r.path("/order/swagger-ui/**")
-                        .uri(URI_ORDER_SERVICE))
-                .route(ORDER_SERVICE, r -> r.path("/order/v3/api-docs/**")
-                        .uri(URI_ORDER_SERVICE)) // Forward to the user-service
+                .route(orderService, r -> r.path("/order/swagger-ui/**")
+                        .uri(uriOrderService))
+                .route(orderService, r -> r.path("/order/v3/api-docs/**")
+                        .uri(uriOrderService)) // Forward to the user-service
 
                 //PAYMENTS SERVICE ROUTES
-                .route(PAYMENT_SERVICE, r -> r.path("/api/v1/payments/**")
+                .route(paymentService, r -> r.path("/api/v1/payments/**")
                         .filters(f -> f
-                                .filter(new RoleAssignmentFilter(List.of(ROLE_ADMIN, ROLE_USER)))
+                                .filter(new RoleAssignmentFilter(List.of(roleAdmin, roleUser)))
                                 .filter(filter))
-                        .uri(URI_PAYMENT_SERVICE))
+                        .uri(uriPaymentService))
 
                 //SWAGGER
-                .route(PAYMENT_SERVICE, r -> r.path("/payment/swagger-ui/**")
-                        .uri(URI_PAYMENT_SERVICE))
-                .route(PAYMENT_SERVICE, r -> r.path("/payment/v3/api-docs/**")
-                        .uri(URI_PAYMENT_SERVICE)) // Forward to the user-service
+                .route(paymentService, r -> r.path("/payment/swagger-ui/**")
+                        .uri(uriPaymentService))
+                .route(paymentService, r -> r.path("/payment/v3/api-docs/**")
+                        .uri(uriPaymentService)) // Forward to the user-service
 
 
                 //LIBRARY SERVICE ROUTES
-                .route(LIBRARY_SERVICE, r -> r.path("/api/v1/library/**")
+                .route(libraryService, r -> r.path("/api/v1/library/**")
                         .filters(f -> f
-                                .filter(new RoleAssignmentFilter(List.of(ROLE_ADMIN, ROLE_USER)))
+                                .filter(new RoleAssignmentFilter(List.of(roleAdmin, roleUser)))
                                 .filter(filter))
-                        .uri(URI_LIBRARY_SERVICE))
+                        .uri(uriLibraryService))
 
                 //SWAGGER
-                .route(LIBRARY_SERVICE, r -> r.path("/library/swagger-ui/**")
-                        .uri(URI_LIBRARY_SERVICE))
-                .route(LIBRARY_SERVICE, r -> r.path("/library/v3/api-docs/**")
-                        .uri(URI_LIBRARY_SERVICE)) // Forward to the user-service
+                .route(libraryService, r -> r.path("/library/swagger-ui/**")
+                        .uri(uriLibraryService))
+                .route(libraryService, r -> r.path("/library/v3/api-docs/**")
+                        .uri(uriLibraryService)) // Forward to the user-service
 
 
                 .build();

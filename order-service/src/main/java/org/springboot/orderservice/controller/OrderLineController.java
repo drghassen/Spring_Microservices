@@ -1,6 +1,6 @@
 package org.springboot.orderservice.controller;
 import lombok.RequiredArgsConstructor;
-import org.springboot.orderservice.orderLine.OrderLine;
+import org.springboot.orderservice.orderline.OrderLine;
 import org.springboot.orderservice.services.OrderLineService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;

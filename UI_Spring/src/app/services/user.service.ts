@@ -9,19 +9,17 @@ import { environment } from '../../environments/environment';
 })
 export class UserService {
 
-  constructor(private http:HttpClient) {
+  constructor(private http:HttpClient, private auth:AuthService) {
   }
 
   private url = environment.apiUrl+'/users/'
   private urlAdmin = environment.apiUrl+'/user/admin'
 
-  token = localStorage.getItem('token');
-
   //get images!
 
   getUserImageByUsername(username:any): Observable<Blob>{
     const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
+      ...this.auth.getAuthorizationHeaders(),
     });
     return this.http.get(`${this.url}${username}/image`,{headers, responseType:'blob'});
   }
@@ -29,27 +27,27 @@ export class UserService {
 
   updateById(id:any,user:any){
     const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
+      ...this.auth.getAuthorizationHeaders(),
     });
     return this.http.put(`${this.url}update/${id}`,user,{headers});
   }
   getAllUsers(){
     const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
+      ...this.auth.getAuthorizationHeaders(),
     });
     return this.http.get(`${this.urlAdmin}`,{headers});
   }
 
   getUserById(id:any){
     const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
+      ...this.auth.getAuthorizationHeaders(),
     });
     return this.http.get(`${this.url}/${id}`,{headers});
   }
 
   deleteUser(id:any){
     const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
+      ...this.auth.getAuthorizationHeaders(),
     });
     return this.http.delete(`${this.url}${id}`,{headers});
   }
@@ -57,7 +55,7 @@ export class UserService {
   updateByUsername( username:any,user:any){
     //headers and params
     const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
+      ...this.auth.getAuthorizationHeaders(),
     });
     return this.http.put(`${this.url}update/username/${username}`,user,{headers});
   }
@@ -68,7 +66,7 @@ export class UserService {
 
     // headers
     const headers = new HttpHeaders({
-      Authorization: `Bearer ${this.token}`,
+      ...this.auth.getAuthorizationHeaders(),
     });
 
     // Make the GET request with the username in the path

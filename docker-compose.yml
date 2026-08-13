@@ -2,38 +2,24 @@ services:
 
   config-server:
     build:
-      context: ./config-server
+      context: .
+      dockerfile: config-server/Dockerfile
     container_name: config-server
     ports:
       - 8888:8888
-    volumes:
-      - config-server:/app
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost","8888"]
-      interval: 30s
-      retries: 3
-      start_period: 10s
-      timeout: 10s
     networks:
       - microservices
 
   discovery-service:
     build:
-      context: ./discovery-service
+      context: .
+      dockerfile: discovery-service/Dockerfile
     container_name: discovery-service
     ports:
       - 8761:8761
-    volumes:
-      - discovery-service:/app
     environment:
       EUREKA_HOSTNAME_DISCOVERY: discovery-service
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost","8761"]
-      interval: 30s
-      retries: 3
-      start_period: 10s
-      timeout: 10s
     networks:
       - microservices
     depends_on:
@@ -57,22 +43,15 @@ services:
 
   gateway:
     build:
-      context: ./gateway
+      context: .
+      dockerfile: gateway/Dockerfile
     container_name: gateway
     ports:
       - 8222:8222
-    volumes:
-      - gateway:/app
     environment:
       EUREKA_HOSTNAME_GATEWAY: gateway
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost","8222"]
-      interval: 30s
-      retries: 3
-      start_period: 10s
-      timeout: 10s
     networks:
       - microservices
     depends_on:
@@ -82,7 +61,8 @@ services:
 
   games-service:
     build:
-      context: ./games-service
+      context: .
+      dockerfile: games-service/Dockerfile
     container_name: games-service
     environment:
       DB_URL: jdbc:postgresql://ms_pg_sql:5432/steam
@@ -91,8 +71,9 @@ services:
       EUREKA_HOSTNAME_GAMES: games-service
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
+      UPLOADS_GAMES_DIR: /app/uploads/games
     volumes:
-      - games-service:/app
+      - games-uploads:/app/uploads/games
     networks:
       - microservices
     depends_on:
@@ -101,10 +82,9 @@ services:
 
   library-service:
     build:
-      context: ./library-service
+      context: .
+      dockerfile: library-service/Dockerfile
     container_name: library-service
-    volumes:
-      - library-service:/app
     environment:
       EUREKA_HOSTNAME_LIBRARY: library-service
       MONGO_HOST: mongo_db
@@ -118,10 +98,9 @@ services:
 
   order-service:
     build:
-      context: ./order-service
+      context: .
+      dockerfile: order-service/Dockerfile
     container_name: order-service
-    volumes:
-      - order-service:/app
     environment:
       USER_URL: http://gateway:8222/api/v1/users
       LIBRARY_URL: http://gateway:8222/api/v1/library
@@ -141,10 +120,9 @@ services:
 
   payment-service:
     build:
-      context: ./payment-service
+      context: .
+      dockerfile: payment-service/Dockerfile
     container_name: payment-service
-    volumes:
-      - payment-service:/app
     environment:
       DB_URL: jdbc:postgresql://ms_pg_sql:5432/steam
       DB_USERNAME: postgres
@@ -161,16 +139,18 @@ services:
 
   user-service:
     build:
-      context: ./user-service
+      context: .
+      dockerfile: user-service/Dockerfile
     container_name: user-service
-    volumes:
-      - user-service:/app
     environment:
       LIBRARY_URL: http://gateway:8222/api/v1/library
       EUREKA_HOSTNAME_USER: user-service
       MONGO_HOST: mongo_db
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
+      UPLOADS_USER_DIR: /app/uploads/user
+    volumes:
+      - user-uploads:/app/uploads/user
     networks:
       - microservices
     depends_on:
@@ -179,12 +159,11 @@ services:
 
   client:
     build:
-      context: ./UI_Spring
+      context: .
+      dockerfile: UI_Spring/Dockerfile
     container_name: client
-    volumes:
-      - client:/app
     ports:
-      - 80:80
+      - 80:8080
     networks:
       - microservices
     depends_on:
@@ -275,16 +254,9 @@ volumes:
   mongo:
   postgres:
   pgadmin:
-  user-service:
-  order-service:
-  payment-service:
-  library-service:
-  gateway:
-  config-server:
-  discovery-service:
-  games-service:
+  user-uploads:
+  games-uploads:
   mongo-express:
-  client:
   sonarqube_data:
   sonarqube_extensions:
   sonarqube_logs:

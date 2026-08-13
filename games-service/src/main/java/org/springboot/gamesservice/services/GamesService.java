@@ -3,11 +3,12 @@ package org.springboot.gamesservice.services;
 
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.springboot.gamesservice.category.CategoryApp;
 import org.springboot.gamesservice.exception.GamesPurchaseException;
 import org.springboot.gamesservice.games.*;
 import org.springboot.gamesservice.mapper.GameMapper;
+import org.springboot.gamesservice.repository.CategoryRepo;
 import org.springboot.gamesservice.repository.GameRepo;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
@@ -25,12 +26,13 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class GamesService {
     private final GameRepo repository;
+    private final CategoryRepo categoryRepository;
     private final GameMapper mapper;
 
 
@@ -46,38 +48,95 @@ public class GamesService {
 
     // GET IMAGES :
     public Resource getGameImage(Integer gameId) throws IOException {
-        // Fetch the image name from the database or user object based on userId
+
         GamesApp game = repository.findById(gameId)
-                .orElseThrow(() -> new RuntimeException("Game not found"));
+                .orElseThrow(() ->
+                        new EntityNotFoundException(
+                                "Game not found with ID: " + gameId
+                        )
+                );
+
         String imageName = game.getImage();
 
-        // Construct the image file path
-        Path imagePath = Paths.get(uploadDir).resolve(imageName);
-
-        // Check if the image exists
-        if (Files.exists(imagePath)) {
-            return new FileSystemResource(imagePath);
-        } else {
-            throw new RuntimeException("Image not found for game " + gameId);
+        if (StringUtils.isBlank(imageName)) {
+            throw new EntityNotFoundException(
+                    "No image found for game ID: " + gameId
+            );
         }
-    }
-    private String giveMeNewName(String oldName)
-    {
 
-        String firstpart = oldName.substring(0, oldName.lastIndexOf("."));
-        String secondpart = oldName.substring(oldName.lastIndexOf(".") + 1);
-        return firstpart + System.currentTimeMillis() + "." + secondpart;
+        Path uploadPath = Paths.get(uploadDir);
+
+        Path imagePath = uploadPath
+                .resolve(imageName)
+                .normalize();
+
+        if (!imagePath.startsWith(uploadPath.normalize())) {
+            throw new IllegalArgumentException(
+                    "Invalid image path"
+            );
+        }
+
+        if (!Files.exists(imagePath) || !Files.isRegularFile(imagePath)) {
+            throw new EntityNotFoundException(
+                    "Image not found for game ID: " + gameId
+            );
+        }
+
+        return new FileSystemResource(imagePath);
+    }
+    private String giveMeNewName(String oldName) {
+
+        if (StringUtils.isBlank(oldName)) {
+            throw new IllegalArgumentException(
+                    "The original filename cannot be null or empty"
+            );
+        }
+
+        int lastDot = oldName.lastIndexOf(".");
+
+        if (lastDot <= 0 || lastDot == oldName.length() - 1) {
+            throw new IllegalArgumentException(
+                    "The file must have a valid extension"
+            );
+        }
+
+        String extension = oldName.substring(lastDot).toLowerCase();
+
+        return UUID.randomUUID() + extension;
     }
 
     @Value("${uploads.dir}")
     private String uploadDir;
     public String saveImage2(MultipartFile mf) throws IOException {
-        String newName = giveMeNewName(mf.getOriginalFilename());
-        Path uploadPath = Paths.get(uploadDir);
-        if (!Files.exists(uploadPath))
-            Files.createDirectory(uploadPath);
-        Path pathFile = uploadPath.resolve(newName);
-        Files.write(pathFile, mf.getBytes());
+
+        if (mf == null || mf.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "The uploaded file cannot be null or empty"
+            );
+        }
+
+        String originalFilename = mf.getOriginalFilename();
+
+        if (StringUtils.isBlank(originalFilename)) {
+            throw new IllegalArgumentException(
+                    "The original filename cannot be null or empty"
+            );
+        }
+
+        String newName = giveMeNewName(originalFilename);
+
+        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
+
+        Files.createDirectories(uploadPath);
+
+        Path pathFile = uploadPath.resolve(newName).normalize();
+
+        if (!pathFile.startsWith(uploadPath)) {
+            throw new IllegalArgumentException("Invalid file path");
+        }
+
+        Files.copy(mf.getInputStream(), pathFile);
+
         return newName;
     }
 
@@ -86,8 +145,19 @@ public class GamesService {
             GamesRequest request,
             MultipartFile mf
     ) throws IOException {
+        if (request.categoryId() == null) {
+            throw new IllegalArgumentException("Category is required");
+        }
+
+        var category = categoryRepository.findById(request.categoryId())
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Category not found with ID: " + request.categoryId()
+                ));
+
         var game = mapper.toGame(request);
-        if (!mf.isEmpty()){
+        game.setCategory(category);
+
+        if (mf != null && !mf.isEmpty()){
             game.setImage(saveImage2(mf));
         }
         return repository.save(game).getId();
@@ -105,8 +175,6 @@ public class GamesService {
     }
 
     private void mergeGame(GamesApp game, GamesRequest gamesRequest) {
-        CategoryApp category = new CategoryApp();
-        category.setId(gamesRequest.categoryId());
         if (StringUtils.isNotBlank(gamesRequest.name())){
             game.setName(gamesRequest.name());
         }
@@ -120,6 +188,10 @@ public class GamesService {
             game.setAvaiblity(gamesRequest.avaiblity());
         }
         if (gamesRequest.categoryId()!=null){
+            CategoryApp category = categoryRepository.findById(gamesRequest.categoryId())
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "Category not found with ID: " + gamesRequest.categoryId()
+                    ));
             game.setCategory(category);
         }
     }

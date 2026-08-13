@@ -1,9 +1,7 @@
 package org.springboot.orderservice.repository;
 
-import jakarta.persistence.LockModeType;
-import org.springboot.orderservice.orderLine.OrderLine;
+import org.springboot.orderservice.orderline.OrderLine;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 
 import java.util.List;
 

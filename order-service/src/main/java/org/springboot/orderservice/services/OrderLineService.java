@@ -2,8 +2,8 @@ package org.springboot.orderservice.services;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springboot.orderservice.mapper.OrderLineMapper;
-import org.springboot.orderservice.orderLine.OrderLine;
-import org.springboot.orderservice.orderLine.OrderLineRequestWithoutId;
+import org.springboot.orderservice.orderline.OrderLine;
+import org.springboot.orderservice.orderline.OrderLineRequestWithoutId;
 import org.springboot.orderservice.repository.OrderLineRepository;
 import org.springframework.stereotype.Service;
 

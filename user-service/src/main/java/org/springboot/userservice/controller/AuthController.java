@@ -1,12 +1,9 @@
 package org.springboot.userservice.controller;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springboot.userservice.request.UserRequest;
 import org.springboot.userservice.services.UserService;
-import org.springboot.userservice.user.Address;
 import org.springboot.userservice.user.LoginRequest;
 import org.springboot.userservice.user.ResponseMapper;
 import org.springframework.beans.factory.annotation.Value;

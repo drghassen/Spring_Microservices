@@ -24,19 +24,57 @@ export class AuthService {
   }
 
   isLoggedIn(){
-    let token=localStorage.getItem('token');
-    if(token){
-      return true;
-    }else{
+    const data = this.getUserDataFromToken();
+    if(!data){
       return false;
     }
-  }
-  getUserDataFromToken(){
-    let token=localStorage.getItem('token');
-    if(token){
-      let data=JSON.parse(window.atob(token.split('.')[1]))
-      return data;
+    if(data.exp && Date.now() >= data.exp * 1000){
+      this.logout();
+      return false;
     }
+    return true;
+  }
+
+  getUserDataFromToken(){
+    const token=localStorage.getItem('token');
+    if(!token){
+      return null;
+    }
+    const payload = token.split('.')[1];
+    if(!payload){
+      this.logout();
+      return null;
+    }
+    try{
+      const normalizedPayload = payload
+        .replace(/-/g, '+')
+        .replace(/_/g, '/');
+      const paddedPayload = normalizedPayload.padEnd(
+        normalizedPayload.length + (4 - normalizedPayload.length % 4) % 4,
+        '='
+      );
+      return JSON.parse(window.atob(paddedPayload));
+    }catch{
+      this.logout();
+      return null;
+    }
+  }
+
+  getUsername(){
+    return this.getUserDataFromToken()?.sub ?? null;
+  }
+
+  isAdmin(){
+    return this.getUsername() === 'admin';
+  }
+
+  getAuthorizationHeaders(): Record<string, string>{
+    const token = localStorage.getItem('token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  logout(){
+    localStorage.removeItem('token');
   }
 
 }
