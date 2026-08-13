@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 @SpringBootTest
-public class GatewayAuthFilter {
+class GatewayAuthFilter {
    /* private final JwtUtil jwtUtil = mock(JwtUtil.class); // Mocked JwtUtil
     private final List<String> OPEN_ENDPOINTS = List.of("/public", "/health");
     private final JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtUtil);

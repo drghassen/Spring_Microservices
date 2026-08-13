@@ -64,17 +64,7 @@ public class GamesService {
             );
         }
 
-        Path uploadPath = Paths.get(uploadDir);
-
-        Path imagePath = uploadPath
-                .resolve(imageName)
-                .normalize();
-
-        if (!imagePath.startsWith(uploadPath.normalize())) {
-            throw new IllegalArgumentException(
-                    "Invalid image path"
-            );
-        }
+        Path imagePath = resolveImagePath(imageName);
 
         if (!Files.exists(imagePath) || !Files.isRegularFile(imagePath)) {
             throw new EntityNotFoundException(
@@ -84,29 +74,55 @@ public class GamesService {
 
         return new FileSystemResource(imagePath);
     }
-    private String giveMeNewName(String oldName) {
 
-        if (StringUtils.isBlank(oldName)) {
+    private String generateStoredImageName(String originalFilename) {
+
+        if (StringUtils.isBlank(originalFilename)) {
             throw new IllegalArgumentException(
                     "The original filename cannot be null or empty"
             );
         }
 
-        int lastDot = oldName.lastIndexOf(".");
+        String sanitizedName = originalFilename.trim();
+        int lastDot = sanitizedName.lastIndexOf(".");
 
-        if (lastDot <= 0 || lastDot == oldName.length() - 1) {
+        if (lastDot <= 0 || lastDot == sanitizedName.length() - 1) {
             throw new IllegalArgumentException(
                     "The file must have a valid extension"
             );
         }
 
-        String extension = oldName.substring(lastDot).toLowerCase();
+        String extension = sanitizedName
+                .substring(lastDot)
+                .toLowerCase();
 
         return UUID.randomUUID() + extension;
     }
 
+    private Path uploadRoot() {
+        return Paths.get(uploadDir)
+                .toAbsolutePath()
+                .normalize();
+    }
+
+    private Path resolveImagePath(String imageName) {
+        Path uploadPath = uploadRoot();
+        Path imagePath = uploadPath
+                .resolve(imageName)
+                .normalize();
+
+        if (!imagePath.startsWith(uploadPath)) {
+            throw new IllegalArgumentException(
+                    "Invalid image path"
+            );
+        }
+
+        return imagePath;
+    }
+
     @Value("${uploads.dir}")
     private String uploadDir;
+
     public String saveImage2(MultipartFile mf) throws IOException {
 
         if (mf == null || mf.isEmpty()) {
@@ -115,27 +131,12 @@ public class GamesService {
             );
         }
 
-        String originalFilename = mf.getOriginalFilename();
-
-        if (StringUtils.isBlank(originalFilename)) {
-            throw new IllegalArgumentException(
-                    "The original filename cannot be null or empty"
-            );
-        }
-
-        String newName = giveMeNewName(originalFilename);
-
-        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
+        String newName = generateStoredImageName(mf.getOriginalFilename());
+        Path uploadPath = uploadRoot();
 
         Files.createDirectories(uploadPath);
 
-        Path pathFile = uploadPath.resolve(newName).normalize();
-
-        if (!pathFile.startsWith(uploadPath)) {
-            throw new IllegalArgumentException("Invalid file path");
-        }
-
-        Files.copy(mf.getInputStream(), pathFile);
+        Files.copy(mf.getInputStream(), resolveImagePath(newName));
 
         return newName;
     }

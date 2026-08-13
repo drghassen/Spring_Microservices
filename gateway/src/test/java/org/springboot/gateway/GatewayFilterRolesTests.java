@@ -2,8 +2,6 @@ package org.springboot.gateway;
 
 import org.junit.jupiter.api.Test;
 import org.springboot.gateway.filter.RoleAssignmentFilter;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -15,14 +13,10 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
-@SpringBootTest
-public class GatewayFilterRolesTests {
-
-    @Autowired
-    private RoleAssignmentFilter roleAssignmentFilter;
+class GatewayFilterRolesTests {
 
     @Test
-    public void testFilter() {
+    void testFilter() {
         // Mock ServerWebExchange and GatewayFilterChain
         ServerWebExchange exchange = mock(ServerWebExchange.class);
         GatewayFilterChain chain = mock(GatewayFilterChain.class);

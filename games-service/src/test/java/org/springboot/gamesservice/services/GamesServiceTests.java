@@ -17,6 +17,8 @@ import org.springboot.gamesservice.repository.CategoryRepo;
 import org.springboot.gamesservice.repository.GameRepo;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.core.io.Resource;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -166,5 +168,23 @@ class GamesServiceTests {
 
         assertThat(resource.exists()).isTrue();
         assertThat(resource.getFilename()).isEqualTo("cover.png");
+    }
+
+    @Test
+    void repositoryOperationsShouldDelegateToRepository() {
+        var pageable = PageRequest.of(0, 5);
+        var game = GamesApp.builder().id(5).name("Game").build();
+        var page = new PageImpl<>(List.of(game));
+
+        when(repository.findByNameContaining("Game", pageable)).thenReturn(page);
+        when(repository.findById(5)).thenReturn(Optional.of(game));
+        when(repository.findAll()).thenReturn(List.of(game));
+
+        assertThat(gamesService.getGamesPagination("Game", pageable)).isSameAs(page);
+        assertThat(gamesService.findById(5)).isSameAs(game);
+        assertThat(gamesService.findAll()).containsExactly(game);
+        assertThat(gamesService.deleteGame(5)).isEqualTo(5);
+
+        verify(repository).deleteById(5);
     }
 }

@@ -58,7 +58,7 @@
         <jacoco.version>0.8.15</jacoco.version>
 
         <sonar.coverage.jacoco.xmlReportPaths>
-            target/site/jacoco/jacoco.xml
+            **/target/site/jacoco/jacoco.xml
         </sonar.coverage.jacoco.xmlReportPaths>
 
         <!-- ===================================================== -->
