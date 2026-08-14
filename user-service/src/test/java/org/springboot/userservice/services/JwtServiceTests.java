@@ -14,7 +14,12 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(properties = "jwt.secret=413F4428472B4BB6250655368566D5970337336763979244226452948404D6351")
+@SpringBootTest(properties = {
+        "spring.cloud.config.enabled=false",
+        "eureka.client.enabled=false",
+        "uploads.dir=target/test-uploads",
+        "jwt.secret=413F4428472B4BB6250655368566D5970337336763979244226452948404D6351"
+})
 class JwtServiceTests {
 
     @Autowired

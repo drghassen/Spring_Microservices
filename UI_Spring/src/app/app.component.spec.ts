@@ -1,15 +1,18 @@
 import { TestBed } from '@angular/core/testing';
-import { RouterModule } from '@angular/router';
 import { AppComponent } from './app.component';
+import { componentTestImports, componentTestProviders } from './testing';
+import { FooterComponent } from './shared/footer/footer.component';
+import { HeaderComponent } from './shared/header/header.component';
 
 describe('AppComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [
-        RouterModule.forRoot([])
-      ],
+      imports: componentTestImports,
+      providers: componentTestProviders,
       declarations: [
-        AppComponent
+        AppComponent,
+        HeaderComponent,
+        FooterComponent
       ],
     }).compileComponents();
   });
@@ -26,10 +29,11 @@ describe('AppComponent', () => {
     expect(app.title).toEqual('UI_Spring');
   });
 
-  it('should render title', () => {
+  it('should render the application layout', () => {
     const fixture = TestBed.createComponent(AppComponent);
     fixture.detectChanges();
     const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector('h1')?.textContent).toContain('Hello, UI_Spring');
+    expect(compiled.querySelector('app-header')).not.toBeNull();
+    expect(compiled.querySelector('app-footer')).not.toBeNull();
   });
 });
