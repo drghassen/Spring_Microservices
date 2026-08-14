@@ -1,6 +1,15 @@
 version: 2.1
 
 commands:
+  prepare-maven-cache-key:
+    description: Generate a Maven cache key that changes when any project POM changes.
+    steps:
+      - run:
+          name: Calculate Maven dependency cache key
+          command: |
+            find . -name pom.xml -not -path './.m2/*' \
+              -exec sha256sum {} + | sort > .maven-cache-key
+
   qualify-application-images:
     description: Build, scan, exercise and optionally publish one immutable set of application images.
     parameters:
@@ -22,6 +31,11 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
+      - prepare-maven-cache-key
+      - restore_cache:
+          keys:
+            - maven-v3-{{ checksum ".maven-cache-key" }}
+            - maven-v3-
       - run:
           name: Scan source, secrets and IaC with Trivy
           command: sh .circleci/scripts/scan-filesystem.sh
@@ -35,15 +49,16 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
+      - prepare-maven-cache-key
       - restore_cache:
           keys:
-            - maven-v2-{{ checksum "pom.xml" }}
-            - maven-v2-
+            - maven-v3-{{ checksum ".maven-cache-key" }}
+            - maven-v3-
       - run:
           name: Compile, test, analyse SonarQube and wait for its quality gate
           command: bash .circleci/scripts/backend-quality.sh
       - save_cache:
-          key: maven-v2-{{ checksum "pom.xml" }}
+          key: maven-v3-{{ checksum ".maven-cache-key" }}
           paths:
             - ~/.m2/repository
       - store_test_results:
@@ -98,10 +113,12 @@ jobs:
 workflows:
   ci:
     jobs:
-      - filesystem-security-scan
       - backend-quality:
           context:
             - sonarqube
+      - filesystem-security-scan:
+          requires:
+            - backend-quality
       - frontend-quality
       - container-qualification:
           requires:

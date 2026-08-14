@@ -7,7 +7,11 @@ import org.springframework.context.ApplicationContext;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.cloud.config.enabled=false",
+        "eureka.client.enabled=false",
+        "uploads.dir=target/test-uploads"
+})
 class GamesServiceApplicationTests {
 
     @Autowired
