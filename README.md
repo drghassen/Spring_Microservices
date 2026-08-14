@@ -395,12 +395,13 @@ All services are connected to the `microservices` network, ensuring they can com
 # CircleCI
 
 The CI/CD definition is versioned in [`.circleci/config.yml`](.circleci/config.yml).
+It is intentionally declarative: the executable CI logic is split into versioned scripts under [`.circleci/scripts/`](.circleci/scripts/), which can be checked locally with `bash -n` before a CircleCI run.
 
 ## Pipeline flow
 
-Every branch and pull request must pass backend tests, a frontend production build, Trivy filesystem security scans, the SonarQube quality gate, and Docker image build/scan/smoke tests.
+Every branch and pull request must pass Trivy source, secret and IaC scans; backend tests with JaCoCo and the SonarQube quality gate; Angular headless tests and a production build; then Docker image build, SBOM generation, Trivy image scans, Docker Compose smoke tests, Eureka registration checks, and a passive OWASP ZAP baseline scan.
 
-Only a successful build on `master` can publish immutable images to Azure Container Registry. Kubernetes deployment is deliberately outside this pipeline.
+On non-`master` branches, the complete container qualification runs against local CI images. On `master`, that same qualification job builds the images once and pushes those already-tested local images to Azure Container Registry. Kubernetes deployment and image signing are deliberately outside this pipeline until their target environment and OIDC identity are configured.
 
 ## CircleCI contexts
 
@@ -408,17 +409,21 @@ Create these organization contexts before enabling the project:
 
 | Context | Variables | Purpose |
 | --- | --- | --- |
-| `sonarqube` | `SONAR_HOST_URL`, `SONAR_TOKEN` | Runs analysis and waits for the quality gate. The endpoint must be reachable from the CircleCI executor. |
+| `sonarqube` | `SONAR_HOST_URL`, `SONAR_TOKEN` | Runs analysis and waits for the quality gate on the self-hosted SonarQube runner. |
 | `acr-publish` | `ACR_LOGIN_SERVER`, `ACR_USERNAME`, `ACR_PASSWORD` | Grants the `master`-only publication job permission to push to ACR. |
 
 The pipeline generates an ephemeral JWT secret only for Compose validation. Runtime deployments must inject their own secret through a secret manager.
 
+### Private SonarQube runner
+
+The `backend-quality` job is assigned to the `drghassen/sonar-vm` CircleCI machine runner. This runner is installed on the VM hosting SonarQube, so the `sonarqube` context must use `SONAR_HOST_URL=http://127.0.0.1:9000`. Keep `SONAR_TOKEN` only in the CircleCI context; never commit it to the repository.
+
 ## ACR image tag
 
-All pushed images use the immutable short commit SHA:
+All pushed images use the immutable full commit SHA:
 
 ```text
-<ACR_LOGIN_SERVER>/user-service:<first-7-characters-of-commit-SHA>
+<ACR_LOGIN_SERVER>/user-service:<full-commit-SHA>
 ```
 
 No mutable `latest` tag is pushed.

@@ -100,7 +100,7 @@ export IMAGE_REPOSITORY_PREFIX=ghassen_dridi
 Recommended CircleCI tag:
 
 ```bash
-export IMAGE_TAG=${CIRCLE_SHA1:0:7}
+export IMAGE_TAG=${CIRCLE_SHA1}
 export IMAGE_REPOSITORY_PREFIX=ghassen_dridi
 ```
 
@@ -108,7 +108,7 @@ For Azure Container Registry:
 
 ```bash
 export IMAGE_REPOSITORY_PREFIX="$ACR_LOGIN_SERVER"
-export IMAGE_TAG=${CIRCLE_SHA1:0:7}
+export IMAGE_TAG=${CIRCLE_SHA1}
 ```
 
 ### 4. Docker Environment Cleanup
@@ -387,14 +387,17 @@ Before pushing, review and commit the current changes.
 ## CircleCI Status
 
 The CI implementation is now versioned in `.circleci/config.yml`.
+The YAML file orchestrates jobs only; the executable steps are maintained in `.circleci/scripts/` so they can be reviewed and syntax-checked independently.
+
+The `backend-quality` job runs on the `drghassen/sonar-vm` CircleCI machine runner, installed on the VM that hosts the local SonarQube container. The CircleCI `sonarqube` context must therefore define `SONAR_HOST_URL=http://127.0.0.1:9000` and a private `SONAR_TOKEN`.
 
 It keeps the responsibilities separated:
 
-- tests and production frontend build;
+- backend tests, JaCoCo coverage, SonarQube quality gate, Angular headless tests and production frontend build;
 - Trivy filesystem, secret, IaC and image scans that block on HIGH/CRITICAL findings;
-- SonarQube quality gate;
-- Docker Compose smoke test;
-- immutable image push to Azure Container Registry only after all gates pass on `master`.
+- CycloneDX SBOM generation for every application image;
+- Docker Compose smoke tests, Eureka registration assertions and passive OWASP ZAP baseline scans;
+- immutable full-SHA image push to Azure Container Registry only after all gates pass on `master`.
 
 ## Recommended CircleCI Pipeline
 
@@ -402,27 +405,34 @@ Professional pipeline order:
 
 ```text
 checkout
-backend_compile_and_tests
-frontend_build
-trivy_filesystem_scan
-sonarqube_scan_and_quality_gate
-docker_build_images
-trivy_image_scan
-docker_compose_smoke_test
-optional_push_images
+backend_tests_and_sonarqube_quality_gate ─┐
+frontend_headless_tests_and_build          ├─> build_images_once
+trivy_filesystem_scan                     ─┘        ↓
+                                             SBOM_and_trivy_image_scan
+                                                        ↓
+                                             docker_compose_and_eureka_checks
+                                                        ↓
+                                             OWASP_ZAP_baseline_scan
+                                                        ↓
+                                             push_same_images_to_ACR_on_master
 ```
 
-### Stage 1 - Backend Compile and Tests
+All three first gates run in parallel. Non-`master` branches run the full container qualification with local `ci.local` image tags. `master` runs the same qualification and pushes those exact local image tags to ACR in the same machine job: images are not rebuilt after scanning.
+
+### Stage 1 - Backend Tests, Coverage and SonarQube
 
 ```bash
 mvn -B -ntp clean verify
 ```
 
-### Stage 2 - Frontend Build
+The job then runs SonarQube against the JaCoCo reports produced by `verify` and blocks on the configured quality gate.
+
+### Stage 2 - Frontend Tests and Build
 
 ```bash
 cd UI_Spring
 npm ci
+npm run test -- --watch=false --browsers=ChromeHeadless
 npm run build -- --configuration=production
 ```
 
@@ -440,38 +450,16 @@ trivy fs \
   .
 ```
 
-### Stage 4 - SonarQube
+### Stage 4 - Docker Build
 
 ```bash
-mvn -B -ntp org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
-  -Dsonar.projectKey=Internship-Proxym \
-  -Dsonar.projectName="Internship Proxym" \
-  -Dsonar.host.url="$SONAR_HOST_URL" \
-  -Dsonar.token="$SONAR_TOKEN" \
-  -Dsonar.qualitygate.wait=true \
-  -Dsonar.qualitygate.timeout=300
-```
-
-Important:
-
-If CircleCI Cloud is used, local SonarQube at a private IP like `172.x.x.x` will not be reachable unless exposed securely.
-
-Best options:
-
-- Use SonarCloud.
-- Use a secured public SonarQube endpoint.
-- Use a CircleCI self-hosted runner on the same network as SonarQube.
-
-### Stage 5 - Docker Build
-
-```bash
-export IMAGE_TAG=${CIRCLE_SHA1:0:7}
+export IMAGE_TAG=${CIRCLE_SHA1}
 export IMAGE_REPOSITORY_PREFIX=ghassen_dridi
 
 docker compose build
 ```
 
-### Stage 6 - Trivy Image Scan
+### Stage 5 - SBOM and Trivy Image Scan
 
 Example:
 
@@ -488,7 +476,7 @@ for image in \
   client
 do
   trivy image \
-    --scanners vuln,secret,misconfig \
+    --scanners vuln \
     --severity HIGH,CRITICAL \
     --exit-code 1 \
     --no-progress \
@@ -497,12 +485,16 @@ do
 done
 ```
 
-### Stage 7 - Docker Compose Smoke Test
+The pipeline also writes a CycloneDX SBOM for every image before enforcing the Trivy vulnerability gate.
+
+### Stage 6 - Docker Compose, Eureka and ZAP
 
 Start only the application stack:
 
 ```bash
 docker compose up -d --no-build \
+  mongodb \
+  postgresql \
   config-server \
   discovery-service \
   gateway \
@@ -523,7 +515,9 @@ curl -f http://localhost:8222/actuator/health
 curl -f http://localhost/
 ```
 
-### Stage 8 - Optional Push to Azure Container Registry
+The CI then waits until Eureka reports exactly one instance for each expected application and runs passive ZAP baseline scans against the client and gateway. HIGH-risk ZAP alerts fail the pipeline; lower-risk alerts remain in the JSON and HTML reports for triage.
+
+### Stage 7 - Push to Azure Container Registry
 
 This stage should run only after all previous stages pass.
 
@@ -546,12 +540,13 @@ echo "$ACR_PASSWORD" | docker login "$ACR_LOGIN_SERVER" \
 Build and push with ACR prefix:
 
 ```bash
-export IMAGE_TAG=${CIRCLE_SHA1:0:7}
+export IMAGE_TAG=${CIRCLE_SHA1}
 export IMAGE_REPOSITORY_PREFIX="$ACR_LOGIN_SERVER"
 
-docker compose build
 docker compose push
 ```
+
+The publish operation runs in the same CircleCI machine job as build, Trivy, Compose and ZAP, so it pushes the already-qualified local images without rebuilding them.
 
 Expected ACR image names:
 
@@ -582,19 +577,8 @@ ACR_PASSWORD
 IMAGE_REPOSITORY_PREFIX
 ```
 
-## Current Recommended Next Step
+## Current Pipeline Boundaries
 
-Create `.circleci/config.yml` with only CI and image validation first:
+Image signing and Kubernetes deployment are intentionally not configured yet. They require a defined Azure target and a least-privilege OIDC identity; they must not be simulated with long-lived credentials in the repository.
 
-```text
-compile/test
-SonarQube
-Trivy filesystem scan
-Docker image build
-Trivy image scan
-Docker Compose smoke test
-```
-
-Then add optional ACR push after the pipeline is stable.
-
-Kubernetes deployment should remain a separate future task.
+Before enabling a release on `master`, configure the restricted CircleCI contexts, ensure SonarQube is reachable from CircleCI, and resolve the blocking HIGH/CRITICAL Trivy findings in the tracked IaC. The pipeline deliberately fails while those findings remain.
