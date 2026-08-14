@@ -52,6 +52,13 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
+      - run:
+          name: Trust GitHub SSH host key for SCM analysis
+          command: |
+            install -d -m 700 ~/.ssh
+            grep -qxF 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' ~/.ssh/known_hosts 2>/dev/null || \
+              echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >> ~/.ssh/known_hosts
+            chmod 600 ~/.ssh/known_hosts
       - prepare-maven-cache-key
       - restore_cache:
           keys:
