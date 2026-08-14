@@ -284,65 +284,60 @@ docker-compose down
 - **Description**: Service registry to allow microservices to discover each other.
 - **Depends On**: Config Server (healthcheck).
 
-### 3. **Jenkins**
-- **Ports**: 8010 (UI), 50000 (Agent communication)
-- **Description**: CI/CD server for automating the build and deployment pipeline.
-- **Privileged**: Runs with Docker in Docker for building images.
-
-### 4. **API Gateway**
+### 3. **API Gateway**
 - **Port**: 8222
 - **Description**: Gateway for routing requests to microservices.
 - **Depends On**: Discovery Service (healthcheck).
 
-### 5. **Games Service**
+### 4. **Games Service**
 - **Description**: Handles game-related data.
 - **Database**: PostgreSQL (connection URL).
 - **Depends On**: API Gateway (healthcheck).
 
-### 6. **Library Service**
+### 5. **Library Service**
 - **Description**: Manages the game library.
 - **Database**: MongoDB.
 - **Depends On**: API Gateway (healthcheck).
 
-### 7. **Order Service**
+### 6. **Order Service**
 - **Description**: Handles game orders.
 - **Depends On**: API Gateway (healthcheck).
 
-### 8. **Payment Service**
+### 7. **Payment Service**
 - **Description**: Manages payment processing for orders.
 - **Depends On**: API Gateway (healthcheck).
 
-### 9. **User Service**
+### 8. **User Service**
 - **Description**: Manages user data.
 - **Database**: MongoDB.
 - **Depends On**: API Gateway (healthcheck).
 
-### 10. **Client (UI)**
+### 9. **Client (UI)**
 - **Port**: 80
 - **Description**: Frontend UI for interacting with the microservices.
 - **Depends On**: User Service.
 
-### 11. **SonarQube**
+### 10. **SonarQube**
 - **Port**: 9000
 - **Description**: Code quality analysis platform.
 - **Database**: PostgreSQL (connection URL).
 
-### 12. **MongoDB**
+### 11. **MongoDB**
 - **Port**: 27017
 - **Description**: NoSQL database for services like Library and User.
 - **Environment Variables**: Mongo root username and password.
 
-### 13. **Mongo Express**
+### 12. **Mongo Express**
 - **Port**: 8081
 - **Description**: Web-based admin interface for MongoDB.
 - **Depends On**: MongoDB.
 
-### 14. **PostgreSQL**
+### 13. **PostgreSQL**
 - **Port**: 5432
 - **Description**: Relational database for services like Games and Orders.
 - **Environment Variables**: PostgreSQL username and password.
 
-### 15. **pgAdmin**
+### 14. **pgAdmin**
 - **Port**: 5050
 - **Description**: Web-based admin interface for PostgreSQL.
 - **Depends On**: PostgreSQL.
@@ -397,289 +392,36 @@ All services are connected to the `microservices` network, ensuring they can com
 
 ---
 
-# Jenkins
+# CircleCI
 
-## Step 1: Install Jenkins in Docker
+The CI/CD definition is versioned in [`.circleci/config.yml`](.circleci/config.yml).
 
-### Prerequisites
+## Pipeline flow
 
-- Ensure Docker is installed and running on your system.
+Every branch and pull request must pass backend tests, a frontend production build, Trivy filesystem security scans, the SonarQube quality gate, and Docker image build/scan/smoke tests.
 
-### Docker Command to Install Jenkins
+Only a successful build on `master` can publish immutable images to Azure Container Registry. Kubernetes deployment is deliberately outside this pipeline.
 
-Run the following command to start Jenkins in Docker:
+## CircleCI contexts
 
-```bash
-docker run \
-  --name jenkins \
-  -d \
-  -p 8010:8080 \
-  -p 50000:50000 \
-  --privileged \
-  -v jenkins_home:/var/jenkins_home \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /usr/bin/docker:/usr/bin/docker \
-  --network microservices \
-  salahgo/jenkins:dind
+Create these organization contexts before enabling the project:
+
+| Context | Variables | Purpose |
+| --- | --- | --- |
+| `sonarqube` | `SONAR_HOST_URL`, `SONAR_TOKEN` | Runs analysis and waits for the quality gate. The endpoint must be reachable from the CircleCI executor. |
+| `acr-publish` | `ACR_LOGIN_SERVER`, `ACR_USERNAME`, `ACR_PASSWORD` | Grants the `master`-only publication job permission to push to ACR. |
+
+The pipeline generates an ephemeral JWT secret only for Compose validation. Runtime deployments must inject their own secret through a secret manager.
+
+## ACR image tag
+
+All pushed images use the immutable short commit SHA:
+
+```text
+<ACR_LOGIN_SERVER>/user-service:<first-7-characters-of-commit-SHA>
 ```
 
-### Explanation:
-- `--name jenkins`: Assigns the container name "jenkins".
-- `-d`: Runs the container in detached mode.
-- `-p 8010:8080`: Maps port 8080 in the container to port 8010 on the host, allowing you to access Jenkins at `http://localhost:8010`.
-- `-p 50000:50000`: Exposes the port used for Jenkins agent communication.
-- `--privileged`: Grants the container additional privileges required for Docker in Docker.
-- `-v jenkins_home:/var/jenkins_home`: Persists Jenkins data on the host machine.
-- `-v /var/run/docker.sock:/var/run/docker.sock`: Allows Jenkins to interact with Docker on the host.
-- `-v /usr/bin/docker:/usr/bin/docker`: Ensures Docker is available inside the Jenkins container.
-- `--network microservices`: Connects Jenkins to the `microservices` Docker network.
-
-## Step 2: Configure Jenkins
-
-Once Jenkins is running, access it through your browser at `http://localhost:8010`.
-
-### Configure Credentials for GitHub
-
-1. **Access Jenkins Container**:
-   ```bash
-   docker exec -it jenkins bash
-   ```
-
-2. **Generate SSH Key for GitHub**:
-   Inside the Jenkins container, generate an SSH key to authenticate with GitHub:
-   ```bash
-   ssh-keygen -t rsa -b 4096 -C "achrefbenechikh.eladhari@isitc.u-sousse.tn"
-   ```
-
-3. **Display the Public Key**:
-   Retrieve the generated SSH public key:
-   ```bash
-   cat ~/.ssh/id_rsa.pub
-   ```
-
-4. **Add the SSH Key to GitHub**:
-    - Log in to your GitHub account.
-    - Go to **Settings** > **SSH and GPG keys** > **New SSH key**.
-    - Paste the public key generated in the previous step.
-
-5. **Configure Git Settings**:
-   Set your global Git configuration for Jenkins:
-   ```bash
-   git config --global user.name "Achraf Ladhari"
-   git config --global user.email "achrefbenechikh.eladhari@isitc.u-sousse.tn"
-   ```
-
-6. **Add GitLab to Known Hosts (jenkins container)**:
-   ```bash
-   ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
-   ```
-
-7. **Test SSH Authentication (jenkins container)**:
-   Verify SSH authentication with GitHub:
-   ```bash
-   ssh -T git@github.com 
-   ```
-   or with gitlab 
-    ```bash
-    ssh -T git@gitlab.com
-    ```
-   You should see:
-   ```
-   Hi achrafladhari! You've successfully authenticated, but GitHub does not provide shell access.
-   ```
-
-### Add GitHub and Docker Hub Credentials in Jenkins
-
-- Navigate to **Manage Jenkins** > **Manage Credentials**.
-- Add your GitHub SSH key and Docker Hub credentials for use in the Jenkins pipeline.
-
-## Step 3: Install Required Plugins in Jenkins
-
-### Docker Plugins Installation
-
-1. Go to **Manage Jenkins** > **Manage Plugins**.
-2. Install the following plugins:
-    - **Docker Commons Plugin**
-    - **Docker Pipeline Plugin**
-
-These plugins will allow Jenkins to interact with Docker, build images, and deploy containers.
-
-## Step 4: Create and Configure Jenkins Pipeline
-
-1. **Create a New Pipeline**:
-    - In Jenkins, go to **New Item**.
-    - Select **Pipeline**, give it a name, and click **OK**.
-
-2. **Define Pipeline Script**:
-   In the pipeline configuration, add the following script:
-
-### Pipeline Script Example
-
-```groovy
-pipeline {
-    agent any
-    triggers {
-        pollSCM('* * * * *')
-    }
-
-    environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub')
-        IMAGE_NAME_MICROSERVICE_1 = 'docker_hub_username/microservice-1'
-        IMAGE_NAME_MICROSERVICE_2 = 'docker_hub_username/microservice-2'
-        BUILD_ID = "${env.BUILD_ID}"
-    }
-
-    stages {
-        stage('Checkout') {
-            steps {
-                script {
-                    checkout([
-                            $class: 'GitSCM',
-                            branches: [[name: 'branch_contain_code']],
-                            userRemoteConfigs: [[
-                                                        url: 'ssh_github_url',
-                                                        credentialsId: 'id_for_github_in_jenkins'
-                                                ]]
-                    ])
-                }
-            }
-        }
-        stage('Build Microservice 1') {
-            when {changset "dir-microservice-1/"}
-            steps {
-                dir('dir-microservice-1') {
-                    script {
-                        dockerImageMicroService1 = docker.build("${IMAGE_NAME_MICROSERVICE_1}:${BUILD_ID}")
-                    }
-                }
-            }
-        }
-        
-        stage('Scan Microservice 1 with Trivy') {
-            when {changset "dir-microservice-1/"}
-            steps {
-                script {
-                    sh """
-                    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \\
-                    -e TRIVY_DB_REPO=ghcr.io/aquasecurity/trivy-db \\
-                    aquasec/trivy:latest image --exit-code 0 --scanners vuln --no-progress --timeout 20m --severity LOW,MEDIUM,HIGH,CRITICAL \\
-                    ${IMAGE_NAME_MICROSERVICE_1}:${BUILD_ID}
-                    """
-                }
-            }
-        }
-
-        stage('Push Microservice 1 to Docker Hub') {
-            when {changset "dir-microservice-1/"}
-            steps {
-                script {
-                    docker.withRegistry('https://index.docker.io/v1/', 'docker_hub_cred_id_in_jenkins') {
-                        dockerImageMicroService1.push()
-                    }
-                    sh 'echo "UPDATING TAG IN HELM CHARTS"'
-                    withCredentials([sshUserPrivateKey(credentialsId: 'github_cred_in_jenkins', keyFileVariable: 'SSH_KEY')]) {
-                        sh """
-                                    git clone ssh_github_link temp_repo
-                                    cd temp_repo/dir/to/helm/chart
-                                    sed -i '/^  tag: / s/: .*/: "${BUILD_ID}"/' values.yaml
-                                    git config user.name "Achraf Ladhari"
-                                    git config user.email "achrefbenechikh.eladhari@isitc.u-sousse.tn"
-                                    git add values.yaml
-                                    git commit -m "CustomUpdated tag to ${BUILD_ID} in helm chart"
-                                    git push origin master
-                                    cd ../../../..
-                                    rm -R temp_repo
-                                    """
-                    }
-                }
-            }
-        }
-        //Same steps for every thing
-        stage('Build Microservice 2') {
-            when {changset "dir-microservice-2/"}
-            steps {
-                script {
-                    // Build microservice 2 (example command)
-                    sh 'docker build -t microservice2 .'
-                }
-            }
-        }
-
-        stage('Scan Microservice 2 with Trivy') {
-            when {changset "dir-microservice-2/"}
-            steps {
-                script {
-                    // Scan microservice 2 with Trivy
-                    sh 'trivy image microservice2'
-                }
-            }
-        }
-
-        stage('Push Microservice 2 to Docker Hub') {
-            when {changset "dir-microservice-2/"}
-            steps {
-                script {
-                    // Push the image to Docker Hub
-                    sh 'docker push microservice2'
-                }
-            }
-        }
-    }
-    post {
-        always {
-            // Clean up environment after pipeline runs
-            def imagesToCleanup = [
-                    'aquasec/trivy',
-                    "${IMAGE_NAME_MICROSERVICE_1}",
-                    "${IMAGE_NAME_MICROSERVICE_2}"
-            ]
-            imagesToCleanup.each { imageName ->
-                def imageIds = sh(script: "docker images --filter=reference='${imageName}:*' -q", returnStdout: true).trim()
-                if (imageIds) {
-                    imageIds.split('\n').each { imageId ->
-                        sh "docker rmi -f ${imageId}"
-                    }
-                }
-            }
-            def dirExists = fileExists('temp_repo')
-            if (dirExists) {
-                deleteDir()
-            }
-            echo 'Cleanup Successfully done!'
-        }
-    }
-}
-```
-You can find the detailed pipeline in the root folder (Jenkinsfile)
-## Step 5: Link Jenkins Pipeline with GitHub Repository
-
-1. **Add Repository URL**:
-   In the pipeline configuration, link the Jenkins pipeline to your GitHub repository using the SSH URL.
-
-2. **Configure SCM**:
-    - In **Pipeline** section, set the **Definition** to `Pipeline script from SCM`.
-    - Select `Git` as the SCM, and provide the SSH URL of your repository.
-
-## Step 6: Run the Pipeline
-
-After configuring everything:
-
-1. **Trigger the Pipeline**:
-    - Go to your Jenkins dashboard and select the pipeline you created.
-    - Click **Build Now** to run the pipeline.
-
-2. **Monitor Pipeline Execution**:
-   The pipeline will:
-    - Build the microservices and frontend.
-    - Scan each microservice for vulnerabilities using Trivy.
-    - Push the Docker images to Docker Hub.
-    - Clean up the environment after the pipeline finishes.
-
-Note : My jenkins file has a lot of steps so i can't get screenshot i will put a screen of my docker hub repository.
-### Docker hub Repo :
-![Docker Hub](screens/docker_hub_repo.png)
-### Jenkins Build Success : 
-![Jenkins](screens/jenkins_build_success.png)
+No mutable `latest` tag is pushed.
 
 ---
 
@@ -1732,7 +1474,7 @@ This section outlines the steps to set up monitoring for your application using 
 - [Eureka](https://spring.io/projects/spring-cloud-netflix) - Service discovery
 - [JWT](https://jwt.io/) - Token-based authentication
 - [Docker](https://docs.docker.com/) - Containerisation
-- [Jenkins](https://www.jenkins.io/doc/) - Pipeline CI/CD
+- [CircleCI](https://circleci.com/docs/) - Pipeline CI/CD
 - [Kubernetes](https://kubernetes.io/docs/home/) - Orchestration
 - [Terraform](https://developer.hashicorp.com/terraform/docs) - Build infrastructure
 - [Ansible](https://docs.ansible.com/) - Ansible playbooks

@@ -8,6 +8,8 @@ services:
     container_name: config-server
     ports:
       - 8888:8888
+    environment:
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env or the shell before starting Docker Compose}"
     networks:
       - microservices
 
@@ -21,27 +23,13 @@ services:
       - 8761:8761
     environment:
       EUREKA_HOSTNAME_DISCOVERY: discovery-service
+      EUREKA_ENABLE_SELF_PRESERVATION: "false"
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
     networks:
       - microservices
     depends_on:
       config-server:
         condition: service_healthy
-
-  jenkins:
-    image: salahgo/jenkins:dind
-    container_name: jenkins
-    ports:
-      - 8010:8080
-      - 50000:50000
-    privileged: true
-    volumes:
-      - /var/lib/docker/volumes/jenkins_home/_data:/var/jenkins_home
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /usr/bin/docker:/usr/bin/docker
-    networks:
-      - microservices
-
 
   gateway:
     image: ${IMAGE_REPOSITORY_PREFIX:-ghassen_dridi}/gateway:${IMAGE_TAG:-local}
@@ -55,6 +43,7 @@ services:
       EUREKA_HOSTNAME_GATEWAY: gateway
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env or the shell before starting Docker Compose}"
     networks:
       - microservices
     depends_on:
@@ -157,6 +146,7 @@ services:
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
       UPLOADS_USER_DIR: /app/uploads/user
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env or the shell before starting Docker Compose}"
     volumes:
       - user-uploads:/app/uploads/user
     networks:

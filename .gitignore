@@ -1,5 +1,6 @@
 node_modules
 target/
+.env
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
@@ -44,3 +45,5 @@ build/
 /terraform/terraform.tfstate.backup
 /terraform/.terraform.lock.hcl
 /terraform/variables.tf
+
+reports/zap/*.key

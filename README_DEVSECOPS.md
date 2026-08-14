@@ -384,23 +384,17 @@ trivy-reports/ghassen_dridi_*.txt
 
 Before pushing, review and commit the current changes.
 
-## Jenkins Status
+## CircleCI Status
 
-Jenkins is not the chosen CI tool for the next phase.
+The CI implementation is now versioned in `.circleci/config.yml`.
 
-The existing `Jenkinsfile` should not be used as the target design because:
+It keeps the responsibilities separated:
 
-- It builds Docker images from service folders, which is incompatible with the optimized Dockerfiles.
-- It contains hardcoded Sonar tokens.
-- It repeats image scan stages manually.
-- It uses `--exit-code 0` for Trivy, so vulnerabilities do not fail the pipeline.
-- It mixes image build, image push, and Helm chart updates in one flow.
-
-Next CI target:
-
-```text
-CircleCI
-```
+- tests and production frontend build;
+- Trivy filesystem, secret, IaC and image scans that block on HIGH/CRITICAL findings;
+- SonarQube quality gate;
+- Docker Compose smoke test;
+- immutable image push to Azure Container Registry only after all gates pass on `master`.
 
 ## Recommended CircleCI Pipeline
 
@@ -505,7 +499,7 @@ done
 
 ### Stage 7 - Docker Compose Smoke Test
 
-Start only the application stack, not Jenkins:
+Start only the application stack:
 
 ```bash
 docker compose up -d --no-build \
@@ -604,4 +598,3 @@ Docker Compose smoke test
 Then add optional ACR push after the pipeline is stable.
 
 Kubernetes deployment should remain a separate future task.
-

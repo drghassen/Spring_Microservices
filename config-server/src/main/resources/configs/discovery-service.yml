@@ -1,6 +1,10 @@
 eureka:
   instance:
      hostname: ${EUREKA_HOSTNAME_DISCOVERY:localhost}
+  server:
+    # Keep Eureka's protective default outside local Docker, where a stopped
+    # container must be evicted instead of leaving a stale route behind.
+    enable-self-preservation: ${EUREKA_ENABLE_SELF_PRESERVATION:true}
   client:
     register-with-eureka: false
     fetch-registry: false

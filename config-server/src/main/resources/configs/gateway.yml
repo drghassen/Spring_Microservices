@@ -2,6 +2,7 @@ eureka:
   instance:
     hostname: ${EUREKA_HOSTNAME_GATEWAY:localhost}
   client:
+    should-unregister-on-shutdown: true
     service-url:
       defaultZone: ${EUREKA_DEFAULT_ZONE:http://localhost:8761/eureka}
 server:
@@ -39,7 +40,7 @@ spring:
             maxAge: 3600
 
 jwt:
-  secret: ${JWT_SECRET:${SECRET_KEY:413F4428472B4BB6250655368566D5970337336763979244226452948404D6351}}
+  secret: ${JWT_SECRET}
 
 roles:
   admin: ${ROLES_ADMIN:ADMIN}

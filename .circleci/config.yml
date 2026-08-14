@@ -1,0 +1,289 @@
+version: 2.1
+
+commands:
+  build-application-images:
+    description: Build every deployable application image with an immutable commit tag.
+    parameters:
+      repository_prefix:
+        type: string
+    steps:
+      - run:
+          name: Build application images
+          command: |
+            set -euo pipefail
+
+            export IMAGE_TAG="${CIRCLE_SHA1:0:7}"
+            export IMAGE_REPOSITORY_PREFIX="<< parameters.repository_prefix >>"
+            # CI uses an ephemeral secret only to validate Docker Compose interpolation.
+            export JWT_SECRET="$(openssl rand -base64 48)"
+
+            docker compose config -q
+            docker compose build \
+              config-server discovery-service gateway games-service library-service \
+              order-service payment-service user-service client
+
+  scan-application-images:
+    description: Create Trivy reports and fail for HIGH or CRITICAL image vulnerabilities.
+    parameters:
+      repository_prefix:
+        type: string
+    steps:
+      - run:
+          name: Scan application images with Trivy
+          command: |
+            set -euo pipefail
+
+            export IMAGE_TAG="${CIRCLE_SHA1:0:7}"
+            export IMAGE_REPOSITORY_PREFIX="<< parameters.repository_prefix >>"
+            mkdir -p reports/trivy-images
+
+            for service in \
+              config-server discovery-service gateway games-service library-service \
+              order-service payment-service user-service client
+            do
+              image="${IMAGE_REPOSITORY_PREFIX}/${service}:${IMAGE_TAG}"
+
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                -v "$PWD/reports/trivy-images:/reports" \
+                aquasec/trivy:0.72.0 image \
+                --scanners vuln \
+                --severity HIGH,CRITICAL \
+                --exit-code 0 \
+                --format json \
+                --output "/reports/${service}.json" \
+                --no-progress \
+                --timeout 20m \
+                "$image"
+
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                aquasec/trivy:0.72.0 image \
+                --scanners vuln \
+                --severity HIGH,CRITICAL \
+                --exit-code 1 \
+                --no-progress \
+                --timeout 20m \
+                "$image"
+            done
+
+jobs:
+  backend-tests:
+    docker:
+      - image: maven:3.9.9-eclipse-temurin-17
+    working_directory: ~/project
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - maven-v1-{{ checksum "pom.xml" }}
+            - maven-v1-
+      - run:
+          name: Compile and test all backend modules
+          command: mvn -B -ntp clean verify
+      - save_cache:
+          key: maven-v1-{{ checksum "pom.xml" }}
+          paths:
+            - ~/.m2/repository
+      - store_test_results:
+          path: .
+
+  frontend-build:
+    docker:
+      - image: cimg/node:22.16
+    working_directory: ~/project
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - npm-v1-{{ checksum "UI_Spring/package-lock.json" }}
+            - npm-v1-
+      - run:
+          name: Install exact frontend dependencies
+          command: npm ci --prefix UI_Spring
+      - save_cache:
+          key: npm-v1-{{ checksum "UI_Spring/package-lock.json" }}
+          paths:
+            - ~/.npm
+      - run:
+          name: Build the Angular production bundle
+          command: npm run build --prefix UI_Spring -- --configuration=production
+
+  filesystem-security-scan:
+    docker:
+      - image: aquasec/trivy:0.72.0
+        entrypoint: /bin/sh
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run:
+          name: Scan source, secrets and IaC with Trivy
+          command: |
+            set -eu
+            mkdir -p reports
+
+            trivy fs \
+              --scanners vuln,secret,misconfig \
+              --severity HIGH,CRITICAL \
+              --exit-code 0 \
+              --format json \
+              --output reports/trivy-filesystem.json \
+              --no-progress \
+              --timeout 20m \
+              .
+
+            trivy fs \
+              --scanners vuln,secret,misconfig \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              --no-progress \
+              --timeout 20m \
+              .
+      - store_artifacts:
+          path: reports/trivy-filesystem.json
+          destination: trivy/trivy-filesystem.json
+
+  sonar-quality-gate:
+    docker:
+      - image: maven:3.9.9-eclipse-temurin-17
+    working_directory: ~/project
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - maven-v1-{{ checksum "pom.xml" }}
+            - maven-v1-
+      - run:
+          name: Analyse SonarQube and wait for the quality gate
+          command: |
+            set -euo pipefail
+            : "${SONAR_HOST_URL:?SONAR_HOST_URL must be defined in the sonarqube CircleCI context}"
+            : "${SONAR_TOKEN:?SONAR_TOKEN must be defined in the sonarqube CircleCI context}"
+
+            mvn -B -ntp verify \
+              org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+              -Dsonar.projectKey=Internship-Proxym \
+              -Dsonar.projectName='Internship Proxym' \
+              -Dsonar.host.url="$SONAR_HOST_URL" \
+              -Dsonar.token="$SONAR_TOKEN" \
+              -Dsonar.qualitygate.wait=true \
+              -Dsonar.qualitygate.timeout=300
+
+  container-validation:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: true
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - build-application-images:
+          repository_prefix: ci.local
+      - scan-application-images:
+          repository_prefix: ci.local
+      - run:
+          name: Run Docker Compose smoke tests
+          command: |
+            set -euo pipefail
+
+            export IMAGE_TAG="${CIRCLE_SHA1:0:7}"
+            export IMAGE_REPOSITORY_PREFIX=ci.local
+            export JWT_SECRET="$(openssl rand -base64 48)"
+            export COMPOSE_PROJECT_NAME="ci${CIRCLE_BUILD_NUM}"
+
+            cleanup() {
+              docker compose logs --no-color > reports/docker-compose.log || true
+              docker compose down --volumes --remove-orphans || true
+            }
+            trap cleanup EXIT
+
+            mkdir -p reports
+            docker compose up -d --no-build --wait --wait-timeout 300 \
+              mongodb postgresql \
+              config-server discovery-service gateway games-service library-service \
+              order-service payment-service user-service client
+
+            curl --fail --retry 12 --retry-delay 5 http://localhost:8888/actuator/health
+            curl --fail --retry 12 --retry-delay 5 http://localhost:8761/actuator/health
+            curl --fail --retry 12 --retry-delay 5 http://localhost:8222/actuator/health
+            curl --fail --retry 12 --retry-delay 5 http://localhost/
+      - store_artifacts:
+          path: reports
+          destination: reports
+
+  publish-acr:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: true
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run:
+          name: Validate Azure Container Registry credentials
+          command: |
+            set -euo pipefail
+            : "${ACR_LOGIN_SERVER:?ACR_LOGIN_SERVER must be defined in the acr-publish CircleCI context}"
+            : "${ACR_USERNAME:?ACR_USERNAME must be defined in the acr-publish CircleCI context}"
+            : "${ACR_PASSWORD:?ACR_PASSWORD must be defined in the acr-publish CircleCI context}"
+      - run:
+          name: Authenticate and push immutable images to ACR
+          command: |
+            set -euo pipefail
+
+            export IMAGE_TAG="${CIRCLE_SHA1:0:7}"
+            export IMAGE_REPOSITORY_PREFIX="$ACR_LOGIN_SERVER"
+            export JWT_SECRET="$(openssl rand -base64 48)"
+
+            echo "$ACR_PASSWORD" | docker login "$ACR_LOGIN_SERVER" \
+              --username "$ACR_USERNAME" \
+              --password-stdin
+
+            docker compose config -q
+            docker compose build \
+              config-server discovery-service gateway games-service library-service \
+              order-service payment-service user-service client
+            docker compose push \
+              config-server discovery-service gateway games-service library-service \
+              order-service payment-service user-service client
+
+            printf '%s\n' \
+              "${ACR_LOGIN_SERVER}/config-server:${IMAGE_TAG}" \
+              "${ACR_LOGIN_SERVER}/discovery-service:${IMAGE_TAG}" \
+              "${ACR_LOGIN_SERVER}/gateway:${IMAGE_TAG}" \
+              "${ACR_LOGIN_SERVER}/games-service:${IMAGE_TAG}" \
+              "${ACR_LOGIN_SERVER}/library-service:${IMAGE_TAG}" \
+              "${ACR_LOGIN_SERVER}/order-service:${IMAGE_TAG}" \
+              "${ACR_LOGIN_SERVER}/payment-service:${IMAGE_TAG}" \
+              "${ACR_LOGIN_SERVER}/user-service:${IMAGE_TAG}" \
+              "${ACR_LOGIN_SERVER}/client:${IMAGE_TAG}" \
+              > acr-image-manifest.txt
+      - store_artifacts:
+          path: acr-image-manifest.txt
+          destination: acr-image-manifest.txt
+
+workflows:
+  ci:
+    jobs:
+      - backend-tests
+      - frontend-build
+      - filesystem-security-scan
+      - sonar-quality-gate:
+          context:
+            - sonarqube
+          requires:
+            - backend-tests
+      - container-validation:
+          requires:
+            - backend-tests
+            - frontend-build
+            - filesystem-security-scan
+            - sonar-quality-gate
+      - publish-acr:
+          context:
+            - acr-publish
+          requires:
+            - container-validation
+          filters:
+            branches:
+              only: master
