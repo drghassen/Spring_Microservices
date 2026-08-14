@@ -7,7 +7,14 @@ import org.springframework.context.ApplicationContext;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.cloud.config.enabled=false",
+        "eureka.client.enabled=false",
+        "application.config.games-url=http://localhost:8222/api/v1/games",
+        "application.config.library-url=http://localhost:8222/api/v1/library",
+        "application.config.payment-url=http://localhost:8222/api/v1/payments",
+        "application.config.user-url=http://localhost:8222/api/v1/users"
+})
 class OrderServiceApplicationTests {
 
     @Autowired

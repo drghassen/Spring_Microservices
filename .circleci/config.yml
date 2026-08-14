@@ -1,5 +1,8 @@
 version: 2.1
 
+orbs:
+  browser-tools: circleci/browser-tools@1.4.8
+
 commands:
   prepare-maven-cache-key:
     description: Generate a Maven cache key that changes when any project POM changes.
@@ -67,9 +70,15 @@ jobs:
   frontend-quality:
     docker:
       - image: cimg/node:22.16-browsers
+    environment:
+      CHROME_BIN: /usr/bin/google-chrome
     working_directory: ~/project
     steps:
+      - browser-tools/install-browser-tools
       - checkout
+      - run:
+          name: Verify Google Chrome is available
+          command: google-chrome --version
       - restore_cache:
           keys:
             - npm-v2-{{ checksum "UI_Spring/package-lock.json" }}
