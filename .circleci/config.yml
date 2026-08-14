@@ -74,7 +74,7 @@ jobs:
       CHROME_BIN: /usr/bin/google-chrome
     working_directory: ~/project
     steps:
-      - browser-tools/install-browser-tools
+      - browser-tools/install-chrome
       - checkout
       - run:
           name: Verify Google Chrome is available
