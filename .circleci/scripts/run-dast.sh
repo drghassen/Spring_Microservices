@@ -19,6 +19,22 @@ else
   : "${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME must be set when DAST_STACK_READY=true}"
 fi
 
+gate_high_risk_alerts() {
+  local target_name="$1"
+
+  [[ -s "reports/zap/${target_name}.json" ]] || {
+    echo "ZAP did not create a JSON report for ${target_name}." >&2
+    return 1
+  }
+
+  jq -e '
+    [ .site[]?.alerts[]? | select((.riskcode // "0" | tonumber) >= 3) ] | length == 0
+  ' "reports/zap/${target_name}.json" >/dev/null || {
+    echo "ZAP reported at least one HIGH-risk alert for ${target_name}." >&2
+    return 1
+  }
+}
+
 zap_baseline() {
   local target_name="$1"
   local target_url="$2"
@@ -35,13 +51,54 @@ zap_baseline() {
     -J "/zap/wrk/${target_name}.json" \
     -r "/zap/wrk/${target_name}.html"
 
-  jq -e '
-    [ .site[]?.alerts[]? | select((.riskcode // "0" | tonumber) >= 3) ] | length == 0
-  ' "reports/zap/${target_name}.json" >/dev/null || {
-    echo "ZAP reported at least one HIGH-risk alert for ${target_name}." >&2
-    exit 1
-  }
+  gate_high_risk_alerts "$target_name"
 }
 
-zap_baseline client http://client:8080/
-zap_baseline gateway http://gateway:8222/actuator/health
+zap_api_scan() {
+  local target_name="$1"
+  local specification_url="$2"
+
+  # The OpenAPI documents declare localhost as their server. -O rewrites the
+  # hostname to the Compose gateway, allowing ZAP to exercise the real routes
+  # from inside the isolated CI network.
+  docker run --rm \
+    --network "${COMPOSE_PROJECT_NAME}_microservices" \
+    -v "$PWD/reports/zap:/zap/wrk" \
+    "$ZAP_IMAGE" \
+    zap-api-scan.py \
+    -t "$specification_url" \
+    -f openapi \
+    -O gateway \
+    -T 10 \
+    -I \
+    -J "/zap/wrk/${target_name}.json" \
+    -r "/zap/wrk/${target_name}.html"
+
+  gate_high_risk_alerts "$target_name"
+}
+
+dast_scan_failed=0
+
+# Continue after a failed target so the alert contains reports for every
+# intended surface, not just the first endpoint with a finding.
+if ! zap_baseline client http://client:8080/; then
+  dast_scan_failed=1
+fi
+
+if ! zap_baseline gateway http://gateway:8222/actuator/health; then
+  dast_scan_failed=1
+fi
+
+# API scanning imports the published contracts and performs active tests only
+# against the disposable Compose stack. Authenticated routes return 401 here;
+# authenticated DAST coverage can be added later with a dedicated test account.
+for api in users games library order payment; do
+  if ! zap_api_scan "${api}-api" "http://gateway:8222/${api}/v3/api-docs"; then
+    dast_scan_failed=1
+  fi
+done
+
+if (( dast_scan_failed )); then
+  echo "OWASP ZAP reported at least one HIGH-risk alert." >&2
+  exit 1
+fi

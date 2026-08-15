@@ -7,11 +7,16 @@ source "$(dirname "$0")/lib/application-images.sh"
 configure_candidate_images
 configure_runtime_environment
 
-docker compose config -q
-docker compose build "${APP_SERVICES[@]}"
+selected_services=("$@")
+if (( ${#selected_services[@]} == 0 )); then
+  selected_services=("${APP_SERVICES[@]}")
+fi
 
-mapfile -t image_references < <(candidate_image_references)
+docker compose config -q
+docker compose build "${selected_services[@]}"
+
+mapfile -t image_references < <(candidate_image_references "${selected_services[@]}")
 docker image inspect "${image_references[@]}" >/dev/null
 
 mkdir -p reports
-printf '%s\n' "${image_references[@]}" > reports/candidate-image-manifest.txt
+printf '%s\n' "${image_references[@]}" > reports/candidate-image-manifest-"${selected_services[0]}".txt

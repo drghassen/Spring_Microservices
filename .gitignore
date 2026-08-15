@@ -49,4 +49,5 @@ build/
 reports/zap/*.key
 /ci-frontend-sonar/
 /ci-backend-sonar/
+/ci-image-archives/
 /UI_Spring/coverage/

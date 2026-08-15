@@ -15,15 +15,28 @@ commands:
               echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >> ~/.ssh/known_hosts
             chmod 600 ~/.ssh/known_hosts
 
-  prepare-maven-cache-key:
-    description: Generate a cache key from every Maven descriptor in the monorepo.
+  load-candidate-images:
+    description: Load the frontend and backend image archives produced by the parallel build jobs.
     steps:
       - run:
-          name: Calculate Maven dependency cache key
+          name: Load the immutable candidate images
+          command: bash .circleci/scripts/load-application-images.sh
+
+  send-security-alert-on-failure:
+    description: Email a concise scanner report without masking the gate failure.
+    parameters:
+      scanner:
+        type: string
+      reports:
+        type: string
+    steps:
+      - run:
+          name: Send Azure Communication Services security alert
+          when: on_fail
           command: |
-            mkdir -p ci-cache
-            find . -name pom.xml -not -path '*/target/*' -print0 | LC_ALL=C sort -z | \
-              xargs -0 sha256sum | sha256sum > ci-cache/maven-poms.sha256
+            bash .circleci/scripts/send-security-alert.sh \
+              --scanner '<< parameters.scanner >>' \
+              --reports '<< parameters.reports >>'
 
 jobs:
   backend-build-test:
@@ -33,11 +46,6 @@ jobs:
     steps:
       - checkout:
           method: full
-      - prepare-maven-cache-key
-      - restore_cache:
-          keys:
-            - v1-maven-{{ checksum "ci-cache/maven-poms.sha256" }}
-            - v1-maven-
       - run:
           name: Compile and test backend services
           command: bash .circleci/scripts/backend-build.sh
@@ -57,10 +65,6 @@ jobs:
           root: .
           paths:
             - ci-backend-sonar
-      - save_cache:
-          key: v1-maven-{{ checksum "ci-cache/maven-poms.sha256" }}
-          paths:
-            - ~/.m2/repository
 
   frontend-build-test:
     docker:
@@ -91,15 +95,18 @@ jobs:
             - ~/.npm
 
   source-security-scan:
-    docker:
-      - image: aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f
-        entrypoint: /bin/sh
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
     working_directory: ~/project
     steps:
       - checkout
       - run:
           name: Scan source secrets and Dockerfiles with Trivy
-          command: sh .circleci/scripts/scan-filesystem.sh
+          command: bash .circleci/scripts/scan-filesystem.sh
+      - send-security-alert-on-failure:
+          scanner: Trivy source and secret scan
+          reports: reports/trivy-filesystem.json
       - store_artifacts:
           path: reports/trivy-filesystem.json
           destination: trivy/trivy-filesystem.json
@@ -112,11 +119,6 @@ jobs:
       - checkout:
           method: full
       - trust-github-ssh-host
-      - prepare-maven-cache-key
-      - restore_cache:
-          keys:
-            - v1-maven-{{ checksum "ci-cache/maven-poms.sha256" }}
-            - v1-maven-
       - attach_workspace:
           at: .
       - run:
@@ -124,7 +126,16 @@ jobs:
           command: bash .circleci/scripts/prepare-backend-sonar-artifacts.sh restore
       - run:
           name: Analyse backend with SonarQube and wait for its quality gate
-          command: bash .circleci/scripts/backend-sonar.sh
+          command: |
+            mkdir -p reports/sonarqube
+            set -o pipefail
+            bash .circleci/scripts/backend-sonar.sh 2>&1 | tee reports/sonarqube/backend-sonar.log
+      - send-security-alert-on-failure:
+          scanner: SonarQube backend quality gate
+          reports: reports/sonarqube/backend-sonar.log
+      - store_artifacts:
+          path: reports/sonarqube
+          destination: sonar-backend
 
   frontend-sonar:
     machine: true
@@ -136,22 +147,20 @@ jobs:
       - trust-github-ssh-host
       - attach_workspace:
           at: .
-      - restore_cache:
-          keys:
-            - v1-sonar-scanner-cli-8.1.0.6389
       - run:
           name: Analyse frontend with SonarQube and wait for its quality gate
-          command: bash .circleci/scripts/frontend-sonar.sh
-      - save_cache:
-          key: v1-sonar-scanner-cli-8.1.0.6389
-          paths:
-            - ~/.cache/sonar-scanner-cli
+          command: |
+            mkdir -p reports/sonarqube
+            set -o pipefail
+            bash .circleci/scripts/frontend-sonar.sh 2>&1 | tee reports/sonarqube/frontend-sonar.log
+      - send-security-alert-on-failure:
+          scanner: SonarQube frontend quality gate
+          reports: reports/sonarqube/frontend-sonar.log
+      - store_artifacts:
+          path: reports/sonarqube
+          destination: sonar-frontend
 
-  image-qualification:
-    parameters:
-      push_to_acr:
-        type: boolean
-        default: false
+  frontend-image-build:
     machine:
       image: ubuntu-2404:current
       docker_layer_caching: true
@@ -160,67 +169,173 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Initialise security report directory
-          command: mkdir -p reports
+          name: Build the immutable frontend image
+          command: bash .circleci/scripts/build-application-images.sh client
       - run:
-          name: Build immutable frontend and backend images
-          command: bash .circleci/scripts/build-application-images.sh
+          name: Export the frontend image for downstream security gates
+          command: bash .circleci/scripts/export-application-images.sh frontend client
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ci-image-archives/frontend
+
+  backend-image-build:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: true
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
       - run:
-          name: Scan every candidate image with Trivy
+          name: Build the immutable backend images
+          command: |
+            bash .circleci/scripts/build-application-images.sh \
+              config-server discovery-service gateway games-service library-service \
+              order-service payment-service user-service
+      - run:
+          name: Export the backend images for downstream security gates
+          command: |
+            bash .circleci/scripts/export-application-images.sh backend \
+              config-server discovery-service gateway games-service library-service \
+              order-service payment-service user-service
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ci-image-archives/backend
+
+  image-trivy-scan:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Generate SBOMs and scan every candidate image with Trivy
           command: bash .circleci/scripts/scan-application-images.sh
-      - run:
-          name: Start the qualified containers, run readiness checks and OWASP ZAP DAST
-          command: bash .circleci/scripts/run-runtime-security.sh
-      - when:
-          condition: << parameters.push_to_acr >>
-          steps:
-            - run:
-                name: Publish the approved immutable images to Azure Container Registry
-                command: bash .circleci/scripts/publish-application-images.sh
+      - send-security-alert-on-failure:
+          scanner: Trivy container image scan
+          reports: reports/trivy-images
       - store_artifacts:
           path: reports
-          destination: image-qualification
+          destination: image-trivy-scan
+
+  container-integration:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Start containers and validate health checks plus Eureka registrations
+          command: bash .circleci/scripts/run-container-integration.sh
+      - store_artifacts:
+          path: reports
+          destination: container-integration
+
+  dast-scan:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Start a clean qualified stack and run OWASP ZAP DAST
+          command: bash .circleci/scripts/run-dast.sh
+      - send-security-alert-on-failure:
+          scanner: OWASP ZAP DAST scan
+          reports: reports/zap
+      - store_artifacts:
+          path: reports
+          destination: dast-scan
+
+  release-acr:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Publish the approved immutable images to Azure Container Registry
+          command: bash .circleci/scripts/publish-application-images.sh
+      - store_artifacts:
+          path: reports
+          destination: acr
 
 workflows:
   ci:
     jobs:
-      # Stage 1: application builds run in parallel.
+      # Stage 1: application validation and source security run in parallel.
       - backend-build-test
       - frontend-build-test
-      # Independent early gate: secrets and Dockerfile misconfigurations.
-      - source-security-scan
+      - source-security-scan:
+          context:
+            - security-alerts
       # Stage 2: both quality gates wait for both successful builds, then run in parallel.
       - backend-sonar:
           context:
             - sonarqube
+            - security-alerts
           requires:
             - backend-build-test
             - frontend-build-test
       - frontend-sonar:
           context:
             - sonarqube
+            - security-alerts
           requires:
             - backend-build-test
             - frontend-build-test
-      # Non-production branches validate the complete candidate but never publish it.
-      - image-qualification:
+      # Stage 3: frontend and backend images build in parallel after every code gate passes.
+      - frontend-image-build:
           requires:
             - source-security-scan
             - backend-sonar
             - frontend-sonar
-          filters:
-            branches:
-              ignore: master
-      # master follows exactly the same qualification path once, then publishes its approved SHA tag.
-      - image-qualification:
-          name: release-acr
-          push_to_acr: true
+      - backend-image-build:
+          requires:
+            - source-security-scan
+            - backend-sonar
+            - frontend-sonar
+      # Stage 4: Trivy scans the exact images from both image-build jobs.
+      - image-trivy-scan:
+          context:
+            - security-alerts
+          requires:
+            - frontend-image-build
+            - backend-image-build
+      # Stage 5: Compose starts those images and validates the runtime integration.
+      - container-integration:
+          requires:
+            - image-trivy-scan
+      # Stage 6: a fresh stack from the same images is assessed with OWASP ZAP.
+      - dast-scan:
+          context:
+            - security-alerts
+          requires:
+            - container-integration
+      # Stage 7: only master publishes images that passed every preceding gate.
+      - release-acr:
           context:
             - acr-publish
           requires:
-            - source-security-scan
-            - backend-sonar
-            - frontend-sonar
+            - dast-scan
           filters:
             branches:
               only: master

@@ -1,8 +1,18 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
-set -eu
+set -euo pipefail
 
-mkdir -p reports
+readonly TRIVY_IMAGE="aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f"
+
+mkdir -p reports .trivy-cache
+
+trivy() {
+  docker run --rm \
+    -v "$PWD:/workspace" \
+    -w /workspace \
+    -v "$PWD/.trivy-cache:/root/.cache/" \
+    "$TRIVY_IMAGE" "$@"
+}
 
 trivy fs \
   --scanners secret,misconfig \

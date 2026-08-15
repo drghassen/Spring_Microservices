@@ -16,10 +16,22 @@ configure_candidate_images() {
 
 candidate_image_references() {
   local service
+  local services=("$@")
 
-  for service in "${APP_SERVICES[@]}"; do
+  if (( ${#services[@]} == 0 )); then
+    services=("${APP_SERVICES[@]}")
+  fi
+
+  for service in "${services[@]}"; do
     printf '%s/%s:%s\n' "$IMAGE_REPOSITORY_PREFIX" "$service" "$IMAGE_TAG"
   done
+}
+
+ensure_zstd() {
+  if ! command -v zstd >/dev/null 2>&1; then
+    sudo apt-get update
+    sudo apt-get install -y zstd
+  fi
 }
 
 ensure_jq() {

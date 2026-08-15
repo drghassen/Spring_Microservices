@@ -396,7 +396,7 @@ It keeps the responsibilities separated:
 - independent backend and frontend build/test jobs, followed by independent SonarQube quality gates;
 - Trivy source-secret, Dockerfile-misconfiguration and image scans that block on HIGH/CRITICAL findings;
 - CycloneDX SBOM generation for every application image;
-- Docker Compose smoke tests, Eureka registration assertions and passive OWASP ZAP baseline scans against the same running stack;
+- separate Trivy, container-integration and OWASP ZAP gates, all using the same immutable image archives;
 - immutable full-SHA image push to Azure Container Registry only after all gates pass on `master`.
 
 ## Recommended CircleCI Pipeline
@@ -409,18 +409,19 @@ frontend_build_and_test ───────┴─> backend_sonar_quality_gate 
                                       frontend_sonar_quality_gate ─┤
 trivy_source_secrets_and_dockerfiles ────────────────────────────┤
                                                                    ↓
-                                                        build_images_once
-                                                                   ↓
-                                                  SBOM_and_trivy_image_scan
-                                                                   ↓
-                                           docker_compose_eureka_and_ZAP_DAST
-                                                                   ↓
-                                       push_the_same_approved_SHA_images_to_ACR
+                                      frontend_image_build ───────┐
+                                      backend_image_build ────────┴─> image_trivy_scan
+                                                                            ↓
+                                                                  container_integration
+                                                                            ↓
+                                                                        OWASP_ZAP_DAST
+                                                                            ↓
+                                                               push_approved_SHA_images_to_ACR
 ```
 
-The backend and frontend builds run in parallel. Once both succeed, their two SonarQube quality gates run in parallel; the independent source scan is an additional early gate. Non-`master` branches run the full container qualification with local `ci.local` image tags. `master` runs the same qualification and pushes those exact local image tags to ACR in the same machine job: images are not rebuilt after scanning.
+The backend and frontend builds run in parallel. Once both succeed, their two SonarQube quality gates run in parallel; the independent source scan is an additional early gate. The frontend and backend Docker images are then built in separate parallel jobs. Non-`master` branches run the full container qualification with local `ci.local` image tags. `master` pushes only images that pass every gate.
 
-The only workspace transfers are the minimal SonarQube inputs: JaCoCo XML plus compiled backend classes in `ci-backend-sonar/`, and the Angular LCOV file in `ci-frontend-sonar/`. Docker images deliberately stay in one machine job, protected by Docker Layer Caching. Exporting nine images as tar archives to a CircleCI workspace would upload and download hundreds of MB (and once per consumer), making the pipeline slower and less reliable.
+The SonarQube workspace transfers only JaCoCo XML plus compiled backend classes in `ci-backend-sonar/`, and the Angular LCOV file in `ci-frontend-sonar/`. To enforce independently visible image, integration and DAST jobs, the image-build jobs export two zstd-compressed Docker archives with SHA-256 checksums in `ci-image-archives/`. Each downstream job verifies and loads those exact archives; images are never rebuilt after Trivy.
 
 ### Stage 1 - Backend Build, Tests and Coverage
 
@@ -457,14 +458,18 @@ trivy fs \
   .
 ```
 
-### Stage 5 - Docker Build
+### Stage 5 - Parallel Docker Image Builds
 
 ```bash
 export IMAGE_TAG=${CIRCLE_SHA1}
 export IMAGE_REPOSITORY_PREFIX=ghassen_dridi
 
-docker compose build
+docker compose build client
+docker compose build config-server discovery-service gateway games-service library-service \
+  order-service payment-service user-service
 ```
+
+The two jobs export the image groups as compressed archives, allowing all subsequent independent jobs to use the same image digests.
 
 ### Stage 6 - SBOM and Trivy Image Scan
 
@@ -494,7 +499,7 @@ done
 
 The pipeline also writes a CycloneDX SBOM for every image before enforcing the Trivy vulnerability gate.
 
-### Stage 7 - Docker Compose, Eureka and ZAP
+### Stage 7 - Docker Compose and Eureka Integration
 
 Start only the application stack:
 
@@ -522,9 +527,13 @@ curl -f http://localhost:8222/actuator/health
 curl -f http://localhost/
 ```
 
-The CI then waits until Eureka reports exactly one instance for each expected application and runs passive ZAP baseline scans against the client and gateway. HIGH-risk ZAP alerts fail the pipeline; lower-risk alerts remain in the JSON and HTML reports for triage. The containers are started once and stay running through both readiness checks and ZAP, then Compose logs are retained as an artifact and the stack is removed.
+The CI waits until Eureka reports exactly one instance for each expected application. Compose logs are retained as artifacts and the test stack is removed.
 
-### Stage 8 - Push to Azure Container Registry
+### Stage 8 - OWASP ZAP DAST
+
+The DAST job reloads the same archives and starts a clean test stack. It runs passive ZAP baseline scans against the client and gateway, then active ZAP API scans against the five OpenAPI contracts routed by the gateway (`users`, `games`, `library`, `order`, and `payment`). HIGH-risk ZAP alerts fail the pipeline; lower-risk alerts remain in the JSON and HTML reports for triage. The active API scans run only against disposable CI data; authenticated-route coverage can be added later with a dedicated test account and ZAP context. A running Docker container cannot be transferred safely from one isolated CircleCI job to another, so DAST starts a new instance of the same qualified image rather than reusing the prior job's container.
+
+### Stage 9 - Push to Azure Container Registry
 
 This stage should run only after all previous stages pass.
 
@@ -552,7 +561,7 @@ docker image tag "ci.local/config-server:${CIRCLE_SHA1}" \
 docker push "${ACR_LOGIN_SERVER}/config-server:${CIRCLE_SHA1}"
 ```
 
-The publish operation runs in the same CircleCI machine job as build, Trivy, Compose and ZAP, so it pushes the already-qualified local images without rebuilding them.
+The publish job reloads the archived images after DAST and pushes them without rebuilding them.
 
 Expected ACR image names:
 
@@ -581,6 +590,32 @@ ACR_LOGIN_SERVER
 ACR_USERNAME
 ACR_PASSWORD
 ```
+
+### Azure Communication Services security-alert context
+
+CircleCI's native **My work** notification is not sufficient for security incidents: it does not send the scanner findings or a report. The pipeline instead sends a real incident e-mail through Azure Communication Services (ACS) when a SonarQube, Trivy, or OWASP ZAP gate fails.
+
+Create a restricted CircleCI context named `security-alerts` and set the following variables there:
+
+```text
+AZURE_COMMUNICATION_CONNECTION_STRING=<ACS secondary connection string>
+ACS_EMAIL_SENDER=DoNotReply@9afef845-00c2-4039-9964-58b09ec98456.azurecomm.net
+SECURITY_ALERT_RECIPIENTS=ghassen.dridi@episousse.com.tn
+```
+
+Retrieve the first value locally and paste it directly into CircleCI; never print, commit, or share it:
+
+```bash
+az communication list-key \
+  --name ghassen-devsecops-acs \
+  --resource-group internship_proxym \
+  --query secondaryConnectionString \
+  --output tsv
+```
+
+`send-security-alert.sh` runs with `when: on_fail`. It creates a readable `.txt` summary containing the failing scanner, commit, branch, CircleCI job URL, and HIGH/CRITICAL findings. It e-mails that summary through ACS and attaches it as a text report. The complete JSON/HTML scanner reports remain in CircleCI artifacts. If ACS delivery fails, the script exits successfully so it cannot hide or replace the original blocking scanner failure.
+
+The current ACS resources are `ghassen-devsecops-email` (Email Communication Service), its Azure-managed domain, and `ghassen-devsecops-acs` (Communication Service), all in `internship_proxym` with `Europe` data location. The Azure-managed sender is suitable for CI alerts; use a verified company domain later if a branded sender address is required.
 
 ## Current Pipeline Boundaries
 
