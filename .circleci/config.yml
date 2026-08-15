@@ -72,8 +72,15 @@ jobs:
           key: maven-v3-{{ checksum ".maven-cache-key" }}
           paths:
             - ~/.m2/repository
+      - run:
+          name: Collect JUnit test reports
+          when: always
+          command: |
+            mkdir -p ~/test-results/junit
+            find . -type f -path '*/target/surefire-reports/*.xml' \
+              -exec cp {} ~/test-results/junit/ \;
       - store_test_results:
-          path: .
+          path: ~/test-results
 
   frontend-quality:
     docker:
