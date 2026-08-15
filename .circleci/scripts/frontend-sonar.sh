@@ -72,5 +72,7 @@ install_scanner
   -Dsonar.exclusions='**/*.spec.ts' \
   -Dsonar.test.inclusions='**/*.spec.ts' \
   -Dsonar.javascript.lcov.reportPaths="../$COVERAGE_REPORT" \
+  -Dsonar.typescript.tsconfigPaths=tsconfig.sonar.json \
+  -Dsonar.scm.disabled=true \
   -Dsonar.qualitygate.wait=true \
   -Dsonar.qualitygate.timeout=300
