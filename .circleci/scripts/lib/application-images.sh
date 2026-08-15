@@ -9,8 +9,9 @@ readonly APP_SERVICES=(
 
 configure_candidate_images() {
   : "${CIRCLE_SHA1:?CIRCLE_SHA1 must be defined by CircleCI}"
+  : "${CIRCLE_WORKFLOW_ID:?CIRCLE_WORKFLOW_ID must be defined by CircleCI}"
 
-  export IMAGE_TAG="$CIRCLE_SHA1"
+  export IMAGE_TAG="${CIRCLE_SHA1}-${CIRCLE_WORKFLOW_ID}"
   export IMAGE_REPOSITORY_PREFIX="${IMAGE_REPOSITORY_PREFIX:-ci.local}"
 }
 

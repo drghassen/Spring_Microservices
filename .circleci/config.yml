@@ -47,8 +47,23 @@ jobs:
       - checkout:
           method: full
       - run:
+          name: Calculate Maven cache key from every project POM
+          command: |
+            find . -maxdepth 2 -name pom.xml -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum > .circleci/maven-poms.sha256
+            test "$(wc -l < .circleci/maven-poms.sha256)" -eq 9
+      - restore_cache:
+          keys:
+            - v1-maven-{{ checksum ".circleci/maven-poms.sha256" }}
+            - v1-maven-
+      - run:
           name: Compile and test backend services
           command: bash .circleci/scripts/backend-build.sh
+      - save_cache:
+          key: v1-maven-{{ checksum ".circleci/maven-poms.sha256" }}
+          paths:
+            - ~/.m2/repository
       - run:
           name: Prepare minimal backend artifacts for SonarQube
           command: bash .circleci/scripts/prepare-backend-sonar-artifacts.sh stage
@@ -110,6 +125,33 @@ jobs:
       - store_artifacts:
           path: reports/trivy-filesystem.json
           destination: trivy/trivy-filesystem.json
+
+  dependency-scan:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run:
+          name: Calculate Maven cache key from every project POM
+          command: |
+            find . -maxdepth 2 -name pom.xml -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum > .circleci/maven-poms.sha256
+            test "$(wc -l < .circleci/maven-poms.sha256)" -eq 9
+      - restore_cache:
+          keys:
+            - v1-maven-{{ checksum ".circleci/maven-poms.sha256" }}
+      - run:
+          name: Scan application dependencies with Trivy
+          command: bash .circleci/scripts/scan-dependencies.sh
+      - send-security-alert-on-failure:
+          scanner: Trivy dependency scan
+          reports: reports/trivy-dependencies.json
+      - store_artifacts:
+          path: reports/trivy-dependencies.json
+          destination: trivy/trivy-dependencies.json
 
   backend-sonar:
     machine: true
@@ -220,6 +262,10 @@ jobs:
       - send-security-alert-on-failure:
           scanner: Trivy container image scan
           reports: reports/trivy-images
+      - persist_to_workspace:
+          root: reports
+          paths:
+            - sbom
       - store_artifacts:
           path: reports
           destination: image-trivy-scan
@@ -287,6 +333,12 @@ workflows:
       - source-security-scan:
           context:
             - security-alerts
+      # Dependency SCA starts only after backend-build-test has saved the exact Maven cache key.
+      - dependency-scan:
+          context:
+            - security-alerts
+          requires:
+            - backend-build-test
       # Stage 2: both quality gates wait for both successful builds, then run in parallel.
       - backend-sonar:
           context:
@@ -306,11 +358,13 @@ workflows:
       - frontend-image-build:
           requires:
             - source-security-scan
+            - dependency-scan
             - backend-sonar
             - frontend-sonar
       - backend-image-build:
           requires:
             - source-security-scan
+            - dependency-scan
             - backend-sonar
             - frontend-sonar
       # Stage 4: Trivy scans the exact images from both image-build jobs.
