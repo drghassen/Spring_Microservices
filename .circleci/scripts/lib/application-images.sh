@@ -6,7 +6,6 @@ readonly APP_SERVICES=(
   config-server discovery-service gateway games-service library-service
   order-service payment-service user-service client
 )
-readonly IMAGE_ARCHIVE="ci-images/application-images.tar.gz"
 
 configure_candidate_images() {
   : "${CIRCLE_SHA1:?CIRCLE_SHA1 must be defined by CircleCI}"
@@ -21,15 +20,6 @@ candidate_image_references() {
   for service in "${APP_SERVICES[@]}"; do
     printf '%s/%s:%s\n' "$IMAGE_REPOSITORY_PREFIX" "$service" "$IMAGE_TAG"
   done
-}
-
-load_candidate_images() {
-  [[ -f "$IMAGE_ARCHIVE" ]] || {
-    echo "Candidate image archive not found: $IMAGE_ARCHIVE" >&2
-    exit 1
-  }
-
-  gzip --decompress --stdout "$IMAGE_ARCHIVE" | docker image load
 }
 
 ensure_jq() {
@@ -47,8 +37,10 @@ configure_runtime_environment() {
 }
 
 collect_compose_logs_and_cleanup() {
+  local report_name="${COMPOSE_REPORT_NAME:-docker-compose}"
+
   mkdir -p reports
-  docker compose logs --no-color > reports/docker-compose.log || true
+  docker compose logs --no-color > "reports/${report_name}.log" || true
   docker compose down --volumes --remove-orphans || true
 }
 

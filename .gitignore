@@ -47,5 +47,5 @@ build/
 /terraform/variables.tf
 
 reports/zap/*.key
-/ci-images/
+/ci-frontend-sonar/
 /UI_Spring/coverage/

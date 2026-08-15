@@ -7,7 +7,6 @@ source "$(dirname "$0")/lib/application-images.sh"
 readonly TRIVY_IMAGE="aquasec/trivy:0.73.0"
 
 configure_candidate_images
-load_candidate_images
 mkdir -p reports/trivy-images reports/sbom .trivy-cache
 
 trivy() {

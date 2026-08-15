@@ -9,7 +9,6 @@ source "$(dirname "$0")/lib/application-images.sh"
 : "${ACR_PASSWORD:?ACR_PASSWORD must be defined in the acr-publish CircleCI context}"
 
 configure_candidate_images
-load_candidate_images
 
 echo "$ACR_PASSWORD" | docker login "$ACR_LOGIN_SERVER" \
   --username "$ACR_USERNAME" \

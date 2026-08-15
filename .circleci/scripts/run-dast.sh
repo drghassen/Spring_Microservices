@@ -9,10 +9,10 @@ readonly ZAP_IMAGE="ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f
 configure_candidate_images
 configure_runtime_environment
 ensure_jq
+export COMPOSE_REPORT_NAME="dast"
 mkdir -p reports/zap
 trap collect_compose_logs_and_cleanup EXIT
 
-load_candidate_images
 wait_for_application_stack
 
 zap_baseline() {

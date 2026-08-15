@@ -4,15 +4,6 @@ orbs:
   browser-tools: circleci/browser-tools@1.4.8
 
 commands:
-  prepare-maven-cache-key:
-    description: Generate a Maven cache key that changes when any project POM changes.
-    steps:
-      - run:
-          name: Calculate Maven dependency cache key
-          command: |
-            find . -name pom.xml -not -path './.m2/*' \
-              -exec sha256sum {} + | sort > .maven-cache-key
-
   trust-github-ssh-host:
     description: Install GitHub's published ED25519 host key for Sonar SCM analysis.
     steps:
@@ -25,24 +16,20 @@ commands:
             chmod 600 ~/.ssh/known_hosts
 
 jobs:
-  backend-build-test:
+  backend-quality:
     machine: true
     resource_class: drghassen/sonar-vm
     working_directory: ~/project
     steps:
-      - checkout
-      - prepare-maven-cache-key
-      - restore_cache:
-          keys:
-            - maven-v3-{{ checksum ".maven-cache-key" }}
-            - maven-v3-
+      - checkout:
+          method: full
+      - trust-github-ssh-host
       - run:
           name: Compile and test backend services
           command: bash .circleci/scripts/backend-build.sh
-      - save_cache:
-          key: maven-v3-{{ checksum ".maven-cache-key" }}
-          paths:
-            - ~/.m2/repository
+      - run:
+          name: Analyse backend with SonarQube and wait for its quality gate
+          command: bash .circleci/scripts/backend-sonar.sh
       - run:
           name: Collect JUnit test reports
           when: always
@@ -52,17 +39,6 @@ jobs:
               -exec cp {} ~/test-results/junit/ \;
       - store_test_results:
           path: ~/test-results
-      - persist_to_workspace:
-          root: .
-          paths:
-            - config-server/target
-            - discovery-service/target
-            - gateway/target
-            - games-service/target
-            - library-service/target
-            - order-service/target
-            - payment-service/target
-            - user-service/target
 
   frontend-build-test:
     docker:
@@ -76,21 +52,13 @@ jobs:
       - run:
           name: Verify Google Chrome is available
           command: google-chrome --version
-      - restore_cache:
-          keys:
-            - npm-v2-{{ checksum "UI_Spring/package-lock.json" }}
-            - npm-v2-
       - run:
           name: Test and build Angular frontend
           command: bash .circleci/scripts/frontend-quality.sh
-      - save_cache:
-          key: npm-v2-{{ checksum "UI_Spring/package-lock.json" }}
-          paths:
-            - ~/.npm
       - persist_to_workspace:
           root: .
           paths:
-            - UI_Spring/coverage
+            - ci-frontend-sonar
 
   source-security-scan:
     docker:
@@ -99,36 +67,12 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
-      - prepare-maven-cache-key
-      - restore_cache:
-          keys:
-            - maven-v3-{{ checksum ".maven-cache-key" }}
-            - maven-v3-
       - run:
-          name: Scan source vulnerabilities, secrets and Dockerfiles with Trivy
+          name: Scan source secrets and Dockerfiles with Trivy
           command: sh .circleci/scripts/scan-filesystem.sh
       - store_artifacts:
           path: reports/trivy-filesystem.json
           destination: trivy/trivy-filesystem.json
-
-  backend-sonar:
-    machine: true
-    resource_class: drghassen/sonar-vm
-    working_directory: ~/project
-    steps:
-      - checkout:
-          method: full
-      - trust-github-ssh-host
-      - attach_workspace:
-          at: .
-      - prepare-maven-cache-key
-      - restore_cache:
-          keys:
-            - maven-v3-{{ checksum ".maven-cache-key" }}
-            - maven-v3-
-      - run:
-          name: Analyse backend with SonarQube and wait for its quality gate
-          command: bash .circleci/scripts/backend-sonar.sh
 
   frontend-sonar:
     machine: true
@@ -144,7 +88,7 @@ jobs:
           name: Analyse frontend with SonarQube and wait for its quality gate
           command: bash .circleci/scripts/frontend-sonar.sh
 
-  image-build:
+  container-qualification:
     machine:
       image: ubuntu-2404:current
       docker_layer_caching: true
@@ -155,64 +99,18 @@ jobs:
       - run:
           name: Build immutable frontend and backend images
           command: bash .circleci/scripts/build-application-images.sh
-      - persist_to_workspace:
-          root: .
-          paths:
-            - ci-images
-      - store_artifacts:
-          path: ci-images/manifest.txt
-          destination: images/manifest.txt
-
-  image-trivy:
-    machine:
-      image: ubuntu-2404:current
-      docker_layer_caching: true
-    resource_class: medium
-    working_directory: ~/project
-    steps:
-      - checkout
-      - attach_workspace:
-          at: .
       - run:
           name: Scan candidate images with Trivy
           command: bash .circleci/scripts/scan-application-images.sh
-      - store_artifacts:
-          path: reports
-          destination: trivy-images
-
-  container-integration:
-    machine:
-      image: ubuntu-2404:current
-      docker_layer_caching: true
-    resource_class: medium
-    working_directory: ~/project
-    steps:
-      - checkout
-      - attach_workspace:
-          at: .
       - run:
           name: Run container integration and readiness checks
           command: bash .circleci/scripts/run-container-integration.sh
-      - store_artifacts:
-          path: reports
-          destination: container-integration
-
-  dast-zap:
-    machine:
-      image: ubuntu-2404:current
-      docker_layer_caching: true
-    resource_class: medium
-    working_directory: ~/project
-    steps:
-      - checkout
-      - attach_workspace:
-          at: .
       - run:
           name: Run ZAP baseline scans against candidate images
           command: bash .circleci/scripts/run-dast.sh
       - store_artifacts:
           path: reports
-          destination: dast
+          destination: container-qualification
 
   release-acr:
     machine:
@@ -222,8 +120,18 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
-      - attach_workspace:
-          at: .
+      - run:
+          name: Build immutable frontend and backend images
+          command: bash .circleci/scripts/build-application-images.sh
+      - run:
+          name: Scan candidate images with Trivy
+          command: bash .circleci/scripts/scan-application-images.sh
+      - run:
+          name: Run container integration and readiness checks
+          command: bash .circleci/scripts/run-container-integration.sh
+      - run:
+          name: Run ZAP baseline scans against candidate images
+          command: bash .circleci/scripts/run-dast.sh
       - run:
           name: Publish approved images to Azure Container Registry
           command: bash .circleci/scripts/publish-application-images.sh
@@ -234,40 +142,33 @@ jobs:
 workflows:
   ci:
     jobs:
-      - backend-build-test
+      - backend-quality:
+          context:
+            - sonarqube
       - frontend-build-test
       - source-security-scan:
           requires:
-            - backend-build-test
-      - backend-sonar:
-          context:
-            - sonarqube
-          requires:
-            - backend-build-test
+            - backend-quality
       - frontend-sonar:
           context:
             - sonarqube
           requires:
             - frontend-build-test
-      - image-build:
+      - container-qualification:
           requires:
             - source-security-scan
-            - backend-sonar
+            - backend-quality
             - frontend-sonar
-      - image-trivy:
-          requires:
-            - image-build
-      - container-integration:
-          requires:
-            - image-trivy
-      - dast-zap:
-          requires:
-            - container-integration
+          filters:
+            branches:
+              ignore: master
       - release-acr:
           context:
             - acr-publish
           requires:
-            - dast-zap
+            - source-security-scan
+            - backend-quality
+            - frontend-sonar
           filters:
             branches:
               only: master
