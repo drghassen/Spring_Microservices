@@ -60,10 +60,23 @@ jobs:
       - run:
           name: Compile and test backend services
           command: bash .circleci/scripts/backend-build.sh
-      - save_cache:
-          key: v1-maven-{{ checksum ".circleci/maven-poms.sha256" }}
-          paths:
-            - ~/.m2/repository
+      # Maven cache saving is disabled because it consistently fails on this runner.
+      # dependency-scan receives the resolved Maven POMs through the workflow workspace.
+      # - save_cache:
+      #     key: v1-maven-{{ checksum ".circleci/maven-poms.sha256" }}
+      #     paths:
+      #       - ~/.m2/repository
+      - run:
+          name: Stage resolved Maven POMs for dependency scanning
+          command: |
+            maven_pom_stage="$PWD/ci-maven-repository"
+            mkdir -p "$maven_pom_stage"
+            (
+              cd ~/.m2/repository
+              find . -type f -name '*.pom' -print0 \
+                | tar --null -T - -cf -
+            ) | tar -xf - -C "$maven_pom_stage"
+            test -n "$(find "$maven_pom_stage" -type f -name '*.pom' -print -quit)"
       - run:
           name: Prepare minimal backend artifacts for SonarQube
           command: bash .circleci/scripts/prepare-backend-sonar-artifacts.sh stage
@@ -80,6 +93,7 @@ jobs:
           root: .
           paths:
             - ci-backend-sonar
+            - ci-maven-repository
 
   frontend-build-test:
     docker:
@@ -133,19 +147,13 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
-      - run:
-          name: Calculate Maven cache key from every project POM
-          command: |
-            find . -maxdepth 2 -name pom.xml -print0 \
-              | LC_ALL=C sort -z \
-              | xargs -0 sha256sum > .circleci/maven-poms.sha256
-            test "$(wc -l < .circleci/maven-poms.sha256)" -eq 9
-      - restore_cache:
-          keys:
-            - v1-maven-{{ checksum ".circleci/maven-poms.sha256" }}
+      - attach_workspace:
+          at: .
       - run:
           name: Scan application dependencies with Trivy
-          command: bash .circleci/scripts/scan-dependencies.sh
+          command: |
+            MAVEN_REPOSITORY="$PWD/ci-maven-repository" \
+              bash .circleci/scripts/scan-dependencies.sh
       - send-security-alert-on-failure:
           scanner: Trivy dependency scan
           reports: reports/trivy-dependencies.json
@@ -333,7 +341,7 @@ workflows:
       - source-security-scan:
           context:
             - security-alerts
-      # Dependency SCA starts only after backend-build-test has saved the exact Maven cache key.
+      # Dependency SCA starts after backend-build-test has staged its resolved Maven POMs.
       - dependency-scan:
           context:
             - security-alerts
