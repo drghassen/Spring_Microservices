@@ -13,24 +13,21 @@ commands:
             find . -name pom.xml -not -path './.m2/*' \
               -exec sha256sum {} + | sort > .maven-cache-key
 
-  qualify-application-images:
-    description: Build, scan, exercise and optionally publish one immutable set of application images.
-    parameters:
-      publish_images:
-        type: boolean
-        default: false
+  trust-github-ssh-host:
+    description: Install GitHub's published ED25519 host key for Sonar SCM analysis.
     steps:
       - run:
-          name: Build, secure, test and optionally publish application images
+          name: Trust GitHub SSH host key for SCM analysis
           command: |
-            PUBLISH_IMAGES="<< parameters.publish_images >>" \
-              bash .circleci/scripts/qualify-application-images.sh
+            install -d -m 700 ~/.ssh
+            grep -qxF 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' ~/.ssh/known_hosts 2>/dev/null || \
+              echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >> ~/.ssh/known_hosts
+            chmod 600 ~/.ssh/known_hosts
 
 jobs:
-  filesystem-security-scan:
-    docker:
-      - image: aquasec/trivy:0.73.0
-        entrypoint: /bin/sh
+  backend-build-test:
+    machine: true
+    resource_class: drghassen/sonar-vm
     working_directory: ~/project
     steps:
       - checkout
@@ -40,34 +37,8 @@ jobs:
             - maven-v3-{{ checksum ".maven-cache-key" }}
             - maven-v3-
       - run:
-          name: Scan source, secrets and IaC with Trivy
-          command: sh .circleci/scripts/scan-filesystem.sh
-      - store_artifacts:
-          path: reports/trivy-filesystem.json
-          destination: trivy/trivy-filesystem.json
-
-  backend-quality:
-    machine: true
-    resource_class: drghassen/sonar-vm
-    working_directory: ~/project
-    steps:
-      - checkout:
-          method: full
-      - run:
-          name: Trust GitHub SSH host key for SCM analysis
-          command: |
-            install -d -m 700 ~/.ssh
-            grep -qxF 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' ~/.ssh/known_hosts 2>/dev/null || \
-              echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >> ~/.ssh/known_hosts
-            chmod 600 ~/.ssh/known_hosts
-      - prepare-maven-cache-key
-      - restore_cache:
-          keys:
-            - maven-v3-{{ checksum ".maven-cache-key" }}
-            - maven-v3-
-      - run:
-          name: Compile, test, analyse SonarQube and wait for its quality gate
-          command: bash .circleci/scripts/backend-quality.sh
+          name: Compile and test backend services
+          command: bash .circleci/scripts/backend-build.sh
       - save_cache:
           key: maven-v3-{{ checksum ".maven-cache-key" }}
           paths:
@@ -81,8 +52,19 @@ jobs:
               -exec cp {} ~/test-results/junit/ \;
       - store_test_results:
           path: ~/test-results
+      - persist_to_workspace:
+          root: .
+          paths:
+            - config-server/target
+            - discovery-service/target
+            - gateway/target
+            - games-service/target
+            - library-service/target
+            - order-service/target
+            - payment-service/target
+            - user-service/target
 
-  frontend-quality:
+  frontend-build-test:
     docker:
       - image: cimg/node:22.16-browsers
     environment:
@@ -99,14 +81,70 @@ jobs:
             - npm-v2-{{ checksum "UI_Spring/package-lock.json" }}
             - npm-v2-
       - run:
-          name: Install, test and build the Angular frontend
+          name: Test and build Angular frontend
           command: bash .circleci/scripts/frontend-quality.sh
       - save_cache:
           key: npm-v2-{{ checksum "UI_Spring/package-lock.json" }}
           paths:
             - ~/.npm
+      - persist_to_workspace:
+          root: .
+          paths:
+            - UI_Spring/coverage
 
-  container-qualification:
+  source-security-scan:
+    docker:
+      - image: aquasec/trivy:0.73.0
+        entrypoint: /bin/sh
+    working_directory: ~/project
+    steps:
+      - checkout
+      - prepare-maven-cache-key
+      - restore_cache:
+          keys:
+            - maven-v3-{{ checksum ".maven-cache-key" }}
+            - maven-v3-
+      - run:
+          name: Scan source vulnerabilities, secrets and Dockerfiles with Trivy
+          command: sh .circleci/scripts/scan-filesystem.sh
+      - store_artifacts:
+          path: reports/trivy-filesystem.json
+          destination: trivy/trivy-filesystem.json
+
+  backend-sonar:
+    machine: true
+    resource_class: drghassen/sonar-vm
+    working_directory: ~/project
+    steps:
+      - checkout:
+          method: full
+      - trust-github-ssh-host
+      - attach_workspace:
+          at: .
+      - prepare-maven-cache-key
+      - restore_cache:
+          keys:
+            - maven-v3-{{ checksum ".maven-cache-key" }}
+            - maven-v3-
+      - run:
+          name: Analyse backend with SonarQube and wait for its quality gate
+          command: bash .circleci/scripts/backend-sonar.sh
+
+  frontend-sonar:
+    machine: true
+    resource_class: drghassen/sonar-vm
+    working_directory: ~/project
+    steps:
+      - checkout:
+          method: full
+      - trust-github-ssh-host
+      - attach_workspace:
+          at: .
+      - run:
+          name: Analyse frontend with SonarQube and wait for its quality gate
+          command: bash .circleci/scripts/frontend-sonar.sh
+
+  image-build:
     machine:
       image: ubuntu-2404:current
       docker_layer_caching: true
@@ -114,11 +152,67 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
-      - qualify-application-images:
-          publish_images: false
+      - run:
+          name: Build immutable frontend and backend images
+          command: bash .circleci/scripts/build-application-images.sh
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ci-images
+      - store_artifacts:
+          path: ci-images/manifest.txt
+          destination: images/manifest.txt
+
+  image-trivy:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: true
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run:
+          name: Scan candidate images with Trivy
+          command: bash .circleci/scripts/scan-application-images.sh
       - store_artifacts:
           path: reports
-          destination: reports
+          destination: trivy-images
+
+  container-integration:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: true
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run:
+          name: Run container integration and readiness checks
+          command: bash .circleci/scripts/run-container-integration.sh
+      - store_artifacts:
+          path: reports
+          destination: container-integration
+
+  dast-zap:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: true
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run:
+          name: Run ZAP baseline scans against candidate images
+          command: bash .circleci/scripts/run-dast.sh
+      - store_artifacts:
+          path: reports
+          destination: dast
 
   release-acr:
     machine:
@@ -128,37 +222,52 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
-      - qualify-application-images:
-          publish_images: true
+      - attach_workspace:
+          at: .
+      - run:
+          name: Publish approved images to Azure Container Registry
+          command: bash .circleci/scripts/publish-application-images.sh
       - store_artifacts:
-          path: reports
-          destination: reports
+          path: reports/acr-image-manifest.txt
+          destination: acr/image-manifest.txt
 
 workflows:
   ci:
     jobs:
-      - backend-quality:
+      - backend-build-test
+      - frontend-build-test
+      - source-security-scan:
+          requires:
+            - backend-build-test
+      - backend-sonar:
           context:
             - sonarqube
-      - filesystem-security-scan:
           requires:
-            - backend-quality
-      - frontend-quality
-      - container-qualification:
+            - backend-build-test
+      - frontend-sonar:
+          context:
+            - sonarqube
           requires:
-            - filesystem-security-scan
-            - backend-quality
-            - frontend-quality
-          filters:
-            branches:
-              ignore: master
+            - frontend-build-test
+      - image-build:
+          requires:
+            - source-security-scan
+            - backend-sonar
+            - frontend-sonar
+      - image-trivy:
+          requires:
+            - image-build
+      - container-integration:
+          requires:
+            - image-trivy
+      - dast-zap:
+          requires:
+            - container-integration
       - release-acr:
           context:
             - acr-publish
           requires:
-            - filesystem-security-scan
-            - backend-quality
-            - frontend-quality
+            - dast-zap
           filters:
             branches:
               only: master

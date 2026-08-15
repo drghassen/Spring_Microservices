@@ -6,6 +6,7 @@ mkdir -p reports
 
 trivy fs \
   --scanners vuln,secret,misconfig \
+  --misconfig-scanners dockerfile \
   --severity HIGH,CRITICAL \
   --exit-code 0 \
   --format json \
@@ -18,6 +19,7 @@ trivy fs \
 
 trivy fs \
   --scanners vuln,secret,misconfig \
+  --misconfig-scanners dockerfile \
   --severity HIGH,CRITICAL \
   --exit-code 1 \
   --offline-scan \
