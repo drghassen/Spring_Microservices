@@ -4,7 +4,7 @@ set -euo pipefail
 
 source "$(dirname "$0")/lib/application-images.sh"
 
-readonly TRIVY_IMAGE="aquasec/trivy:0.73.0"
+readonly TRIVY_IMAGE="aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f"
 
 configure_candidate_images
 mkdir -p reports/trivy-images reports/sbom .trivy-cache
@@ -18,7 +18,8 @@ trivy() {
 }
 
 image_scan_failed=0
-for image in $(candidate_image_references); do
+mapfile -t image_references < <(candidate_image_references)
+for image in "${image_references[@]}"; do
   service="${image#*/}"
   service="${service%%:*}"
 

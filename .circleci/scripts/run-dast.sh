@@ -7,13 +7,17 @@ source "$(dirname "$0")/lib/application-images.sh"
 readonly ZAP_IMAGE="ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef"
 
 configure_candidate_images
-configure_runtime_environment
 ensure_jq
-export COMPOSE_REPORT_NAME="dast"
 mkdir -p reports/zap
-trap collect_compose_logs_and_cleanup EXIT
 
-wait_for_application_stack
+if [[ "${DAST_STACK_READY:-false}" != "true" ]]; then
+  configure_runtime_environment
+  export COMPOSE_REPORT_NAME="dast"
+  trap collect_compose_logs_and_cleanup EXIT
+  wait_for_application_stack
+else
+  : "${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME must be set when DAST_STACK_READY=true}"
+fi
 
 zap_baseline() {
   local target_name="$1"

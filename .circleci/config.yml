@@ -15,21 +15,35 @@ commands:
               echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >> ~/.ssh/known_hosts
             chmod 600 ~/.ssh/known_hosts
 
+  prepare-maven-cache-key:
+    description: Generate a cache key from every Maven descriptor in the monorepo.
+    steps:
+      - run:
+          name: Calculate Maven dependency cache key
+          command: |
+            mkdir -p ci-cache
+            find . -name pom.xml -not -path '*/target/*' -print0 | LC_ALL=C sort -z | \
+              xargs -0 sha256sum | sha256sum > ci-cache/maven-poms.sha256
+
 jobs:
-  backend-quality:
+  backend-build-test:
     machine: true
     resource_class: drghassen/sonar-vm
     working_directory: ~/project
     steps:
       - checkout:
           method: full
-      - trust-github-ssh-host
+      - prepare-maven-cache-key
+      - restore_cache:
+          keys:
+            - v1-maven-{{ checksum "ci-cache/maven-poms.sha256" }}
+            - v1-maven-
       - run:
           name: Compile and test backend services
           command: bash .circleci/scripts/backend-build.sh
       - run:
-          name: Analyse backend with SonarQube and wait for its quality gate
-          command: bash .circleci/scripts/backend-sonar.sh
+          name: Prepare minimal backend artifacts for SonarQube
+          command: bash .circleci/scripts/prepare-backend-sonar-artifacts.sh stage
       - run:
           name: Collect JUnit test reports
           when: always
@@ -39,6 +53,14 @@ jobs:
               -exec cp {} ~/test-results/junit/ \;
       - store_test_results:
           path: ~/test-results
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ci-backend-sonar
+      - save_cache:
+          key: v1-maven-{{ checksum "ci-cache/maven-poms.sha256" }}
+          paths:
+            - ~/.m2/repository
 
   frontend-build-test:
     docker:
@@ -47,8 +69,12 @@ jobs:
       CHROME_BIN: /usr/bin/google-chrome
     working_directory: ~/project
     steps:
-      - browser-tools/install-chrome
       - checkout
+      - restore_cache:
+          keys:
+            - v1-npm-{{ checksum "UI_Spring/package-lock.json" }}
+            - v1-npm-
+      - browser-tools/install-chrome
       - run:
           name: Verify Google Chrome is available
           command: google-chrome --version
@@ -59,10 +85,14 @@ jobs:
           root: .
           paths:
             - ci-frontend-sonar
+      - save_cache:
+          key: v1-npm-{{ checksum "UI_Spring/package-lock.json" }}
+          paths:
+            - ~/.npm
 
   source-security-scan:
     docker:
-      - image: aquasec/trivy:0.73.0
+      - image: aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f
         entrypoint: /bin/sh
     working_directory: ~/project
     steps:
@@ -74,6 +104,28 @@ jobs:
           path: reports/trivy-filesystem.json
           destination: trivy/trivy-filesystem.json
 
+  backend-sonar:
+    machine: true
+    resource_class: drghassen/sonar-vm
+    working_directory: ~/project
+    steps:
+      - checkout:
+          method: full
+      - trust-github-ssh-host
+      - prepare-maven-cache-key
+      - restore_cache:
+          keys:
+            - v1-maven-{{ checksum "ci-cache/maven-poms.sha256" }}
+            - v1-maven-
+      - attach_workspace:
+          at: .
+      - run:
+          name: Restore compiled classes and JaCoCo reports for SonarQube
+          command: bash .circleci/scripts/prepare-backend-sonar-artifacts.sh restore
+      - run:
+          name: Analyse backend with SonarQube and wait for its quality gate
+          command: bash .circleci/scripts/backend-sonar.sh
+
   frontend-sonar:
     machine: true
     resource_class: drghassen/sonar-vm
@@ -84,11 +136,22 @@ jobs:
       - trust-github-ssh-host
       - attach_workspace:
           at: .
+      - restore_cache:
+          keys:
+            - v1-sonar-scanner-cli-8.1.0.6389
       - run:
           name: Analyse frontend with SonarQube and wait for its quality gate
           command: bash .circleci/scripts/frontend-sonar.sh
+      - save_cache:
+          key: v1-sonar-scanner-cli-8.1.0.6389
+          paths:
+            - ~/.cache/sonar-scanner-cli
 
-  container-qualification:
+  image-qualification:
+    parameters:
+      push_to_acr:
+        type: boolean
+        default: false
     machine:
       image: ubuntu-2404:current
       docker_layer_caching: true
@@ -97,77 +160,66 @@ jobs:
     steps:
       - checkout
       - run:
+          name: Initialise security report directory
+          command: mkdir -p reports
+      - run:
           name: Build immutable frontend and backend images
           command: bash .circleci/scripts/build-application-images.sh
       - run:
-          name: Scan candidate images with Trivy
+          name: Scan every candidate image with Trivy
           command: bash .circleci/scripts/scan-application-images.sh
       - run:
-          name: Run container integration and readiness checks
-          command: bash .circleci/scripts/run-container-integration.sh
-      - run:
-          name: Run ZAP baseline scans against candidate images
-          command: bash .circleci/scripts/run-dast.sh
+          name: Start the qualified containers, run readiness checks and OWASP ZAP DAST
+          command: bash .circleci/scripts/run-runtime-security.sh
+      - when:
+          condition: << parameters.push_to_acr >>
+          steps:
+            - run:
+                name: Publish the approved immutable images to Azure Container Registry
+                command: bash .circleci/scripts/publish-application-images.sh
       - store_artifacts:
           path: reports
-          destination: container-qualification
-
-  release-acr:
-    machine:
-      image: ubuntu-2404:current
-      docker_layer_caching: true
-    resource_class: medium
-    working_directory: ~/project
-    steps:
-      - checkout
-      - run:
-          name: Build immutable frontend and backend images
-          command: bash .circleci/scripts/build-application-images.sh
-      - run:
-          name: Scan candidate images with Trivy
-          command: bash .circleci/scripts/scan-application-images.sh
-      - run:
-          name: Run container integration and readiness checks
-          command: bash .circleci/scripts/run-container-integration.sh
-      - run:
-          name: Run ZAP baseline scans against candidate images
-          command: bash .circleci/scripts/run-dast.sh
-      - run:
-          name: Publish approved images to Azure Container Registry
-          command: bash .circleci/scripts/publish-application-images.sh
-      - store_artifacts:
-          path: reports/acr-image-manifest.txt
-          destination: acr/image-manifest.txt
+          destination: image-qualification
 
 workflows:
   ci:
     jobs:
-      - backend-quality:
+      # Stage 1: application builds run in parallel.
+      - backend-build-test
+      - frontend-build-test
+      # Independent early gate: secrets and Dockerfile misconfigurations.
+      - source-security-scan
+      # Stage 2: both quality gates wait for both successful builds, then run in parallel.
+      - backend-sonar:
           context:
             - sonarqube
-      - frontend-build-test
-      - source-security-scan:
           requires:
-            - backend-quality
+            - backend-build-test
+            - frontend-build-test
       - frontend-sonar:
           context:
             - sonarqube
           requires:
+            - backend-build-test
             - frontend-build-test
-      - container-qualification:
+      # Non-production branches validate the complete candidate but never publish it.
+      - image-qualification:
           requires:
             - source-security-scan
-            - backend-quality
+            - backend-sonar
             - frontend-sonar
           filters:
             branches:
               ignore: master
-      - release-acr:
+      # master follows exactly the same qualification path once, then publishes its approved SHA tag.
+      - image-qualification:
+          name: release-acr
+          push_to_acr: true
           context:
             - acr-publish
           requires:
             - source-security-scan
-            - backend-quality
+            - backend-sonar
             - frontend-sonar
           filters:
             branches:

@@ -389,14 +389,14 @@ Before pushing, review and commit the current changes.
 The CI implementation is now versioned in `.circleci/config.yml`.
 The YAML file orchestrates jobs only; the executable steps are maintained in `.circleci/scripts/` so they can be reviewed and syntax-checked independently.
 
-The `backend-quality` job runs on the `drghassen/sonar-vm` CircleCI machine runner, installed on the VM that hosts the local SonarQube container. The CircleCI `sonarqube` context must therefore define `SONAR_HOST_URL=http://127.0.0.1:9000` and a private `SONAR_TOKEN`.
+The `backend-build-test`, `backend-sonar` and `frontend-sonar` jobs run on the `drghassen/sonar-vm` CircleCI machine runner, installed on the VM that hosts the local SonarQube container. The CircleCI `sonarqube` context must therefore define `SONAR_HOST_URL=http://127.0.0.1:9000`, `SONAR_TOKEN`, and the restricted `SONAR_FRONTEND_TOKEN`.
 
 It keeps the responsibilities separated:
 
-- backend tests, JaCoCo coverage, SonarQube quality gate, Angular headless tests and production frontend build;
-- Trivy filesystem, secret, IaC and image scans that block on HIGH/CRITICAL findings;
+- independent backend and frontend build/test jobs, followed by independent SonarQube quality gates;
+- Trivy source-secret, Dockerfile-misconfiguration and image scans that block on HIGH/CRITICAL findings;
 - CycloneDX SBOM generation for every application image;
-- Docker Compose smoke tests, Eureka registration assertions and passive OWASP ZAP baseline scans;
+- Docker Compose smoke tests, Eureka registration assertions and passive OWASP ZAP baseline scans against the same running stack;
 - immutable full-SHA image push to Azure Container Registry only after all gates pass on `master`.
 
 ## Recommended CircleCI Pipeline
@@ -404,28 +404,31 @@ It keeps the responsibilities separated:
 Professional pipeline order:
 
 ```text
-checkout
-backend_tests_and_sonarqube_quality_gate ─┐
-frontend_headless_tests_and_build          ├─> build_images_once
-trivy_filesystem_scan                     ─┘        ↓
-                                             SBOM_and_trivy_image_scan
-                                                        ↓
-                                             docker_compose_and_eureka_checks
-                                                        ↓
-                                             OWASP_ZAP_baseline_scan
-                                                        ↓
-                                             push_same_images_to_ACR_on_master
+backend_build_and_test ────────┐
+frontend_build_and_test ───────┴─> backend_sonar_quality_gate ──┐
+                                      frontend_sonar_quality_gate ─┤
+trivy_source_secrets_and_dockerfiles ────────────────────────────┤
+                                                                   ↓
+                                                        build_images_once
+                                                                   ↓
+                                                  SBOM_and_trivy_image_scan
+                                                                   ↓
+                                           docker_compose_eureka_and_ZAP_DAST
+                                                                   ↓
+                                       push_the_same_approved_SHA_images_to_ACR
 ```
 
-All three first gates run in parallel. Non-`master` branches run the full container qualification with local `ci.local` image tags. `master` runs the same qualification and pushes those exact local image tags to ACR in the same machine job: images are not rebuilt after scanning.
+The backend and frontend builds run in parallel. Once both succeed, their two SonarQube quality gates run in parallel; the independent source scan is an additional early gate. Non-`master` branches run the full container qualification with local `ci.local` image tags. `master` runs the same qualification and pushes those exact local image tags to ACR in the same machine job: images are not rebuilt after scanning.
 
-### Stage 1 - Backend Tests, Coverage and SonarQube
+The only workspace transfers are the minimal SonarQube inputs: JaCoCo XML plus compiled backend classes in `ci-backend-sonar/`, and the Angular LCOV file in `ci-frontend-sonar/`. Docker images deliberately stay in one machine job, protected by Docker Layer Caching. Exporting nine images as tar archives to a CircleCI workspace would upload and download hundreds of MB (and once per consumer), making the pipeline slower and less reliable.
+
+### Stage 1 - Backend Build, Tests and Coverage
 
 ```bash
 mvn -B -ntp clean verify
 ```
 
-The job then runs SonarQube against the JaCoCo reports produced by `verify` and blocks on the configured quality gate.
+It stages only compiled classes and JaCoCo XML for the later backend SonarQube job.
 
 ### Stage 2 - Frontend Tests and Build
 
@@ -436,13 +439,17 @@ npm run test -- --watch=false --browsers=ChromeHeadless
 npm run build -- --configuration=production
 ```
 
-### Stage 3 - Trivy Filesystem Scan
+### Stage 3 - Parallel SonarQube Quality Gates
+
+The backend gate restores the staged backend artifacts, and the frontend gate restores the LCOV report. Both wait for their respective SonarQube quality gate before the image stage is allowed to start.
+
+### Stage 4 - Trivy Filesystem Scan
 
 Blocking mode:
 
 ```bash
 trivy fs \
-  --scanners vuln,secret,misconfig \
+  --scanners secret,misconfig \
   --severity HIGH,CRITICAL \
   --exit-code 1 \
   --no-progress \
@@ -450,7 +457,7 @@ trivy fs \
   .
 ```
 
-### Stage 4 - Docker Build
+### Stage 5 - Docker Build
 
 ```bash
 export IMAGE_TAG=${CIRCLE_SHA1}
@@ -459,7 +466,7 @@ export IMAGE_REPOSITORY_PREFIX=ghassen_dridi
 docker compose build
 ```
 
-### Stage 5 - SBOM and Trivy Image Scan
+### Stage 6 - SBOM and Trivy Image Scan
 
 Example:
 
@@ -487,7 +494,7 @@ done
 
 The pipeline also writes a CycloneDX SBOM for every image before enforcing the Trivy vulnerability gate.
 
-### Stage 6 - Docker Compose, Eureka and ZAP
+### Stage 7 - Docker Compose, Eureka and ZAP
 
 Start only the application stack:
 
@@ -515,9 +522,9 @@ curl -f http://localhost:8222/actuator/health
 curl -f http://localhost/
 ```
 
-The CI then waits until Eureka reports exactly one instance for each expected application and runs passive ZAP baseline scans against the client and gateway. HIGH-risk ZAP alerts fail the pipeline; lower-risk alerts remain in the JSON and HTML reports for triage.
+The CI then waits until Eureka reports exactly one instance for each expected application and runs passive ZAP baseline scans against the client and gateway. HIGH-risk ZAP alerts fail the pipeline; lower-risk alerts remain in the JSON and HTML reports for triage. The containers are started once and stay running through both readiness checks and ZAP, then Compose logs are retained as an artifact and the stack is removed.
 
-### Stage 7 - Push to Azure Container Registry
+### Stage 8 - Push to Azure Container Registry
 
 This stage should run only after all previous stages pass.
 
@@ -537,13 +544,12 @@ echo "$ACR_PASSWORD" | docker login "$ACR_LOGIN_SERVER" \
   --password-stdin
 ```
 
-Build and push with ACR prefix:
+The publishing script retags the already-tested local `ci.local/<service>:<commit_sha>` image to the ACR repository and then pushes it. It never calls `docker compose build` again:
 
 ```bash
-export IMAGE_TAG=${CIRCLE_SHA1}
-export IMAGE_REPOSITORY_PREFIX="$ACR_LOGIN_SERVER"
-
-docker compose push
+docker image tag "ci.local/config-server:${CIRCLE_SHA1}" \
+  "${ACR_LOGIN_SERVER}/config-server:${CIRCLE_SHA1}"
+docker push "${ACR_LOGIN_SERVER}/config-server:${CIRCLE_SHA1}"
 ```
 
 The publish operation runs in the same CircleCI machine job as build, Trivy, Compose and ZAP, so it pushes the already-qualified local images without rebuilding them.
@@ -574,11 +580,10 @@ SONAR_HOST_URL
 ACR_LOGIN_SERVER
 ACR_USERNAME
 ACR_PASSWORD
-IMAGE_REPOSITORY_PREFIX
 ```
 
 ## Current Pipeline Boundaries
 
-Image signing and Kubernetes deployment are intentionally not configured yet. They require a defined Azure target and a least-privilege OIDC identity; they must not be simulated with long-lived credentials in the repository.
+Image signing and Kubernetes deployment are intentionally not configured yet. The next production hardening step is Azure workload-identity federation (OIDC) for CircleCI, replacing the long-lived `ACR_USERNAME` and `ACR_PASSWORD`, then signing the pushed image digests with Cosign before deployment. They require a defined Azure target and a least-privilege identity; they must not be simulated with credentials in the repository.
 
 Before enabling a release on `master`, configure the restricted CircleCI contexts, ensure SonarQube is reachable from CircleCI, and resolve the blocking HIGH/CRITICAL Trivy findings in the tracked IaC. The pipeline deliberately fails while those findings remain.

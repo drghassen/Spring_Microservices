@@ -5,6 +5,7 @@ set -euo pipefail
 source "$(dirname "$0")/lib/application-images.sh"
 
 configure_candidate_images
+configure_runtime_environment
 
 docker compose config -q
 docker compose build "${APP_SERVICES[@]}"
