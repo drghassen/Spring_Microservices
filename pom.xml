@@ -66,6 +66,7 @@
         <!-- ===================================================== -->
 
         <spring-cloud.version>2025.0.2</spring-cloud.version>
+        <springdoc-openapi.version>2.8.9</springdoc-openapi.version>
 
         <!-- ===================================================== -->
         <!-- Security / dependency overrides                       -->
