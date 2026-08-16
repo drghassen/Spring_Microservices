@@ -5,10 +5,27 @@ set -euo pipefail
 source "$(dirname "$0")/lib/application-images.sh"
 
 readonly ZAP_IMAGE="ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef"
+readonly ZAP_REPORT_DIR="$PWD/reports/zap"
 
 configure_candidate_images
 ensure_jq
-mkdir -p reports/zap
+
+prepare_zap_report_dir() {
+  mkdir -p "$ZAP_REPORT_DIR"
+  chmod 0777 "$ZAP_REPORT_DIR"
+
+  echo "ZAP report directory prepared for Docker bind mount:"
+  id
+  stat -c '  %a %U:%G %u:%g %n' "$ZAP_REPORT_DIR"
+  docker info --format '  Docker security options: {{json .SecurityOptions}}' 2>/dev/null || true
+}
+
+log_zap_report_dir_state() {
+  echo "ZAP report directory state before scanning $1:"
+  ls -la "$ZAP_REPORT_DIR"
+}
+
+prepare_zap_report_dir
 
 if [[ "${DAST_STACK_READY:-false}" != "true" ]]; then
   configure_runtime_environment
@@ -21,15 +38,21 @@ fi
 
 gate_high_risk_alerts() {
   local target_name="$1"
+  local report_path="reports/zap/${target_name}.json"
 
-  [[ -s "reports/zap/${target_name}.json" ]] || {
+  [[ -s "$report_path" ]] || {
     echo "ZAP did not create a JSON report for ${target_name}." >&2
+    return 1
+  }
+
+  jq -e type "$report_path" >/dev/null || {
+    echo "ZAP created an invalid or corrupted JSON report for ${target_name}." >&2
     return 1
   }
 
   jq -e '
     [ .site[]?.alerts[]? | select((.riskcode // "0" | tonumber) >= 3) ] | length == 0
-  ' "reports/zap/${target_name}.json" >/dev/null || {
+  ' "$report_path" >/dev/null || {
     echo "ZAP reported at least one HIGH-risk alert for ${target_name}." >&2
     return 1
   }
@@ -39,10 +62,10 @@ zap_baseline() {
   local target_name="$1"
   local target_url="$2"
 
+  log_zap_report_dir_state "$target_name"
   docker run --rm \
-    --user "$(id -u):$(id -g)" \
     --network "${COMPOSE_PROJECT_NAME}_microservices" \
-    -v "$PWD/reports/zap:/zap/wrk" \
+    -v "${ZAP_REPORT_DIR}:/zap/wrk:rw" \
     "$ZAP_IMAGE" \
     zap-baseline.py \
     -t "$target_url" \
@@ -62,10 +85,10 @@ zap_api_scan() {
   # The OpenAPI documents declare localhost as their server. -O rewrites the
   # hostname AND port to the Compose gateway, allowing ZAP to exercise the
   # real routes from inside the isolated CI network.
+  log_zap_report_dir_state "$target_name"
   docker run --rm \
-    --user "$(id -u):$(id -g)" \
     --network "${COMPOSE_PROJECT_NAME}_microservices" \
-    -v "$PWD/reports/zap:/zap/wrk" \
+    -v "${ZAP_REPORT_DIR}:/zap/wrk:rw" \
     "$ZAP_IMAGE" \
     zap-api-scan.py \
     -t "$specification_url" \
