@@ -3,14 +3,16 @@
     <div class="container mt-4">
       <table class="table table-striped">
         <thead>
-        <tr>
-          <th scope="col">Game Name</th>
-        </tr>
+          <tr>
+            <th scope="col">Game Name</th>
+          </tr>
         </thead>
         <tbody>
-        <tr *ngFor="let game of library?.games || []; let i = index;">
-            <td><a class="d-block" [routerLink]="['/games/', game.gameId]">{{ game.name }}</a></td>
-        </tr>
+          @for (game of library?.games || []; track game; let i = $index) {
+            <tr>
+              <td><a class="d-block" [routerLink]="['/games/', game.gameId]">{{ game.name }}</a></td>
+            </tr>
+          }
         </tbody>
       </table>
     </div>

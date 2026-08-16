@@ -1,18 +1,30 @@
 <div class="container mt-4">
 
-  <h2 class="text-center" *ngIf="id!=undefined"> Modify category </h2>
-  <h2 class="text-center" *ngIf="id==undefined"> Add a new category </h2>
+  @if (id!=undefined) {
+    <h2 class="text-center"> Modify category </h2>
+  }
+  @if (id==undefined) {
+    <h2 class="text-center"> Add a new category </h2>
+  }
   <div class="col-6 mx-auto">
-    <div class="alert alert-danger" role="alert" *ngIf="err!=undefined">
-      Error occured!
-    </div>
-    <div class="alert alert-success" role="alert" *ngIf="success!=undefined">
-      Category Updated !
-    </div>
+    @if (err!=undefined) {
+      <div class="alert alert-danger" role="alert">
+        Error occured!
+      </div>
+    }
+    @if (success!=undefined) {
+      <div class="alert alert-success" role="alert">
+        Category Updated !
+      </div>
+    }
     <input [(ngModel)]='category.name' type="text" class="form-control m-1" placeholder="name">
     <input  [(ngModel)]='category.description' type="text" class="form-control m-1" placeholder="description">
-    <button (click)='addCategory()' *ngIf="id==undefined"  class="btn btn-dark form-control m-1">Add Category</button>
-    <button (click)='modify()' *ngIf="id!=undefined" class="btn btn-dark form-control m-1">Update Category</button>
+    @if (id==undefined) {
+      <button (click)='addCategory()'  class="btn btn-dark form-control m-1">Add Category</button>
+    }
+    @if (id!=undefined) {
+      <button (click)='modify()' class="btn btn-dark form-control m-1">Update Category</button>
+    }
   </div>
 
 </div>

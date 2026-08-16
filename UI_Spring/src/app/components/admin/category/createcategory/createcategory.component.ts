@@ -1,12 +1,14 @@
-import {Component, OnInit} from '@angular/core';
+import {Component, OnInit, ChangeDetectionStrategy} from '@angular/core';
 import {AuthService} from "../../../../services/auth.service";
 import {GamesService} from "../../../../services/games.service";
 import {ActivatedRoute, Router} from "@angular/router";
 
 @Component({
-  selector: 'app-createcategory',
-  templateUrl: './createcategory.component.html',
-  styleUrl: './createcategory.component.css'
+    selector: 'app-createcategory',
+    templateUrl: './createcategory.component.html',
+    styleUrl: './createcategory.component.css',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class CreatecategoryComponent implements OnInit{
   err=undefined;

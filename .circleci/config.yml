@@ -97,7 +97,7 @@ jobs:
 
   frontend-build-test:
     docker:
-      - image: cimg/node:22.16-browsers
+      - image: cimg/node:22.23.1-browsers
     environment:
       CHROME_BIN: /usr/bin/google-chrome
     working_directory: ~/project

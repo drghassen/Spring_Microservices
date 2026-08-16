@@ -1,4 +1,4 @@
-import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClient, withXhr } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -29,7 +29,7 @@ export const componentTestImports = [
  * in-memory router. No component test can issue a real network request.
  */
 export const httpTestProviders = [
-  provideHttpClient(),
+  provideHttpClient(withXhr()),
   provideHttpClientTesting(),
   provideRouter([])
 ];

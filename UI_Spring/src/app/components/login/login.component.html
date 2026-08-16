@@ -1,21 +1,23 @@
 <div class="container mt-4">
 
 
-    <h2 class="text-center"> Login to your account </h2>
+  <h2 class="text-center"> Login to your account </h2>
 
-    <div class="col-6 mx-auto">
-
-     
-
-        <div class="alert alert-danger" role="alert" *ngIf="err!=undefined">
-            Password Incorrect or Username!
-          </div>
-        <input  [(ngModel)]='user.username' type="text" class="form-control m-1" placeholder="username">
-        <input [(ngModel)]='user.password' type="password" class="form-control m-1" placeholder="password">
-      
-        <button (click)='login()' class="btn btn-dark form-control m-1">Login</button>
+  <div class="col-6 mx-auto">
 
 
-    </div>
+
+    @if (err!=undefined) {
+      <div class="alert alert-danger" role="alert">
+        Password Incorrect or Username!
+      </div>
+    }
+    <input  [(ngModel)]='user.username' type="text" class="form-control m-1" placeholder="username">
+    <input [(ngModel)]='user.password' type="password" class="form-control m-1" placeholder="password">
+
+    <button (click)='login()' class="btn btn-dark form-control m-1">Login</button>
+
+
+  </div>
 
 </div>

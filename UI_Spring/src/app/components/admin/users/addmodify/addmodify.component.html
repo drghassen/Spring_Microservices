@@ -1,23 +1,37 @@
 <div class="container mt-4">
 
-  <div *ngIf="success" class="alert alert-success">
-    <a class="nav-link" [routerLink]="['/users']">{{ success }}</a>
-  </div>
-
-  <h2 class="text-center" *ngIf="id==undefined"> Create a new account </h2>
-  <h2 class="text-center" *ngIf="id!=undefined"> Update account </h2>
-  <div class="col-6 mx-auto">
-    <div class="alert alert-danger" role="alert" *ngIf="err!=undefined">
-      Error occured!
+  @if (success) {
+    <div class="alert alert-success">
+      <a class="nav-link" [routerLink]="['/users']">{{ success }}</a>
     </div>
+  }
+
+  @if (id==undefined) {
+    <h2 class="text-center"> Create a new account </h2>
+  }
+  @if (id!=undefined) {
+    <h2 class="text-center"> Update account </h2>
+  }
+  <div class="col-6 mx-auto">
+    @if (err!=undefined) {
+      <div class="alert alert-danger" role="alert">
+        Error occured!
+      </div>
+    }
     <input [(ngModel)]='user.name' type="text" class="form-control m-1" placeholder="name">
     <input  [(ngModel)]='user.email' type="email" class="form-control m-1" placeholder="email">
     <input  [(ngModel)]='user.username' type="text" class="form-control m-1" placeholder="username">
     <input  [(ngModel)]='user.address' type="text" class="form-control m-1" placeholder="address">
     <input [(ngModel)]='user.password'  type="password" class="form-control m-1" placeholder="password">
-    <input *ngIf="id==undefined" (change)='select($event)' type="file"  class="form-control m-1" placeholder="image">
-    <button *ngIf="id==undefined" (click)='addUser()' class="btn btn-dark form-control m-1">Create User</button>
-    <button *ngIf="id!=undefined" (click)='updateUser()' class="btn btn-dark form-control m-1">Modify User</button>
+    @if (id==undefined) {
+      <input (change)='select($event)' type="file"  class="form-control m-1" placeholder="image">
+    }
+    @if (id==undefined) {
+      <button (click)='addUser()' class="btn btn-dark form-control m-1">Create User</button>
+    }
+    @if (id!=undefined) {
+      <button (click)='updateUser()' class="btn btn-dark form-control m-1">Modify User</button>
+    }
   </div>
 
 </div>

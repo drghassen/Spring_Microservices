@@ -1,13 +1,15 @@
-import {Component, OnInit} from '@angular/core';
+import {Component, OnInit, ChangeDetectionStrategy} from '@angular/core';
 import {GamesService} from "../../services/games.service";
 import {AuthService} from "../../services/auth.service";
 import {OrdersService} from "../../services/orders.service";
 import {ActivatedRoute} from "@angular/router";
 
 @Component({
-  selector: 'app-orders',
-  templateUrl: './orders.component.html',
-  styleUrl: './orders.component.css'
+    selector: 'app-orders',
+    templateUrl: './orders.component.html',
+    styleUrl: './orders.component.css',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class OrdersComponent implements OnInit{
   constructor(private act:ActivatedRoute,private _orders:OrdersService) {

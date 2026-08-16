@@ -1,12 +1,14 @@
-import {Component, OnInit} from '@angular/core';
+import {Component, OnInit, ChangeDetectionStrategy} from '@angular/core';
 import {ActivatedRoute} from "@angular/router";
 import {AuthService} from "../../services/auth.service";
 import {GamesService} from "../../services/games.service";
 
 @Component({
-  selector: 'app-game-detail',
-  templateUrl: './game-detail.component.html',
-  styleUrl: './game-detail.component.css'
+    selector: 'app-game-detail',
+    templateUrl: './game-detail.component.html',
+    styleUrl: './game-detail.component.css',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class GameDetailComponent implements OnInit {
   game: any;

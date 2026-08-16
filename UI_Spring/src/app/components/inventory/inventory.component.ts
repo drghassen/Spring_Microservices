@@ -1,12 +1,14 @@
-import {Component, OnInit} from '@angular/core';
+import {Component, OnInit, ChangeDetectionStrategy} from '@angular/core';
 import {AuthService} from "../../services/auth.service";
 import {LibraryService} from "../../services/library.service";
 import {ActivatedRoute} from "@angular/router";
 
 @Component({
-  selector: 'app-inventory',
-  templateUrl: './inventory.component.html',
-  styleUrl: './inventory.component.css'
+    selector: 'app-inventory',
+    templateUrl: './inventory.component.html',
+    styleUrl: './inventory.component.css',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class InventoryComponent implements OnInit{
   username:any;

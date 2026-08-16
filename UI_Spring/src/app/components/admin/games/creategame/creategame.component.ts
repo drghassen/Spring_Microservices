@@ -1,12 +1,14 @@
-import {Component, OnInit} from '@angular/core';
+import {Component, OnInit, ChangeDetectionStrategy} from '@angular/core';
 import {AuthService} from "../../../../services/auth.service";
 import {ActivatedRoute, Router} from "@angular/router";
 import {GamesService} from "../../../../services/games.service";
 
 @Component({
-  selector: 'app-creategame',
-  templateUrl: './creategame.component.html',
-  styleUrl: './creategame.component.css'
+    selector: 'app-creategame',
+    templateUrl: './creategame.component.html',
+    styleUrl: './creategame.component.css',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class CreategameComponent implements OnInit{
   err:string | undefined = undefined;

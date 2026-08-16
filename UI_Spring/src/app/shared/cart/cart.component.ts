@@ -1,12 +1,14 @@
-import {Component, OnInit, ViewEncapsulation} from '@angular/core';
+import {Component, OnInit, ViewEncapsulation, ChangeDetectionStrategy} from '@angular/core';
 import {GamesService} from "../../services/games.service";
 import {AuthService} from "../../services/auth.service";
 import {OrdersService} from "../../services/orders.service";
 
 @Component({
-  selector: 'app-cart',
-  templateUrl: './cart.component.html',
-  styleUrl: './cart.component.css',
+    selector: 'app-cart',
+    templateUrl: './cart.component.html',
+    styleUrl: './cart.component.css',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class CartComponent implements OnInit{
   constructor(private _game:GamesService,private _auth:AuthService,private _orders:OrdersService) {

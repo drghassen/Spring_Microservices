@@ -3,25 +3,27 @@
     <div class="container mt-4">
       <table class="table table-striped">
         <thead>
-        <tr>
-          <th scope="col">Id</th>
-          <th scope="col">Reference</th>
-          <th scope="col">Total Amount</th>
-          <th scope="col">Payment Method</th>
-          <th scope="col">Date of order</th>
+          <tr>
+            <th scope="col">Id</th>
+            <th scope="col">Reference</th>
+            <th scope="col">Total Amount</th>
+            <th scope="col">Payment Method</th>
+            <th scope="col">Date of order</th>
 
-        </tr>
+          </tr>
         </thead>
-        <tbody *ngFor="let order of orders; let i = index;">
-        <tr>
-          <th scope="row">{{ i }}</th>
-          <td>{{ order.reference }}</td>
-          <td>{{ order.totalAmount }}€</td>
-          <td>{{ order.paymentMethod }}</td>
-          <td>{{ order.createdAt }}</td>
-        </tr>
-        </tbody>
+        @for (order of orders; track order; let i = $index) {
+          <tbody>
+            <tr>
+              <th scope="row">{{ i }}</th>
+              <td>{{ order.reference }}</td>
+              <td>{{ order.totalAmount }}€</td>
+              <td>{{ order.paymentMethod }}</td>
+              <td>{{ order.createdAt }}</td>
+            </tr>
+          </tbody>
+        }
       </table>
-      </div>
     </div>
+  </div>
 </section>

@@ -27,33 +27,51 @@
               <li class="nav-item @@about">
                 <a class="nav-link" [routerLink]="['/about']">About</a>
               </li>
-              <li class="nav-item @@login" *ngIf="_auth.isAdmin()">
-                <a class="nav-link" [routerLink]="['/games']">Games</a>
-              </li>
-              <li class="nav-item @@login" *ngIf="_auth.isAdmin()">
-                <a class="nav-link" [routerLink]="['/categories']">Categories</a>
-              </li>
-              <li class="nav-item @@login" *ngIf="_auth.isAdmin()">
-                <a class="nav-link" [routerLink]="['/users']">Users</a>
-              </li>
-              <li class="nav-item @@login" *ngIf="_auth.isLoggedIn()==false">
-                <a class="nav-link" [routerLink]="['/login']">Login</a>
-              </li>
-              <li class="nav-item @@register" *ngIf="_auth.isLoggedIn()==false">
-                <a class="nav-link" [routerLink]="['/register']">Register</a>
-              </li>
-              <li class="nav-item @@account" *ngIf="_auth.isLoggedIn()==true">
-                <a class="nav-link" [routerLink]="['/user',_auth.getUsername()]">My Account</a>
-              </li>
-              <li class="nav-item @@inventory" *ngIf="_auth.isLoggedIn()==true">
-                <a class="nav-link" [routerLink]="['/inventory',_auth.getUsername()]">Inventory</a>
-              </li>
-              <li class="nav-item @@orders" *ngIf="_auth.isLoggedIn()==true">
-                <a class="nav-link" [routerLink]="['/orders',_auth.getUsername()]">Orders</a>
-              </li>
-              <li class="nav-item @@logout" *ngIf="_auth.isLoggedIn()==true">
-                <a class="nav-link" (click)="logout()">Log out</a>
-              </li>
+              @if (_auth.isAdmin()) {
+                <li class="nav-item @@login">
+                  <a class="nav-link" [routerLink]="['/games']">Games</a>
+                </li>
+              }
+              @if (_auth.isAdmin()) {
+                <li class="nav-item @@login">
+                  <a class="nav-link" [routerLink]="['/categories']">Categories</a>
+                </li>
+              }
+              @if (_auth.isAdmin()) {
+                <li class="nav-item @@login">
+                  <a class="nav-link" [routerLink]="['/users']">Users</a>
+                </li>
+              }
+              @if (_auth.isLoggedIn()==false) {
+                <li class="nav-item @@login">
+                  <a class="nav-link" [routerLink]="['/login']">Login</a>
+                </li>
+              }
+              @if (_auth.isLoggedIn()==false) {
+                <li class="nav-item @@register">
+                  <a class="nav-link" [routerLink]="['/register']">Register</a>
+                </li>
+              }
+              @if (_auth.isLoggedIn()==true) {
+                <li class="nav-item @@account">
+                  <a class="nav-link" [routerLink]="['/user',_auth.getUsername()]">My Account</a>
+                </li>
+              }
+              @if (_auth.isLoggedIn()==true) {
+                <li class="nav-item @@inventory">
+                  <a class="nav-link" [routerLink]="['/inventory',_auth.getUsername()]">Inventory</a>
+                </li>
+              }
+              @if (_auth.isLoggedIn()==true) {
+                <li class="nav-item @@orders">
+                  <a class="nav-link" [routerLink]="['/orders',_auth.getUsername()]">Orders</a>
+                </li>
+              }
+              @if (_auth.isLoggedIn()==true) {
+                <li class="nav-item @@logout">
+                  <a class="nav-link" (click)="logout()">Log out</a>
+                </li>
+              }
             </ul>
             <a class="navbar-brand font-weight-bold mb-0" [routerLink]="['cart']" title="Shopping cart">
               <i class="ti ti-basket" style="font-size: 35px;"></i>

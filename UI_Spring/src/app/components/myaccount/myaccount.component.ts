@@ -1,12 +1,14 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import {AuthService} from "../../services/auth.service";
 import {ActivatedRoute, Router} from "@angular/router";
 import {UserService} from "../../services/user.service";
 
 @Component({
-  selector: 'app-myaccount',
-  templateUrl: './myaccount.component.html',
-  styleUrl: './myaccount.component.css'
+    selector: 'app-myaccount',
+    templateUrl: './myaccount.component.html',
+    styleUrl: './myaccount.component.css',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class MyaccountComponent implements OnInit {
   user:any={

@@ -51,3 +51,4 @@ reports/zap/*.key
 /ci-backend-sonar/
 /ci-image-archives/
 /UI_Spring/coverage/
+.trivy-cache/

@@ -4,28 +4,32 @@
       <button type="button" [routerLink]="['/users/create/user']" class="btn btn-success btn-sm"><i class="ti ti-device-gamepad-2"></i> Create user</button>
       <table class="table table-striped">
         <thead>
-        <tr>
-          <th scope="col">Id</th>
-          <th scope="col">Name</th>
-          <th scope="col">Username</th>
-          <th scope="col">Email</th>
-          <th scope="col">Address</th>
-          <th scope="col">Role</th>
-        </tr>
+          <tr>
+            <th scope="col">Id</th>
+            <th scope="col">Name</th>
+            <th scope="col">Username</th>
+            <th scope="col">Email</th>
+            <th scope="col">Address</th>
+            <th scope="col">Role</th>
+          </tr>
         </thead>
-        <tbody *ngFor="let user of users; let i = index;">
-        <tr *ngIf="user.username!='admin'">
-          <th scope="row">{{ i }}</th>
-          <td>{{ user.name }}</td>
-          <td>{{ user.username }}</td>
-          <td>{{ user.email }}</td>
-          <td>{{ user.address }}</td>
-          <td>{{ user.role }}</td>
-          <td><button [routerLink]="['/users/modify/user/', user.id]" class="btn btn-secondary btn-sm">Modify</button>   <button (click)="deleteUser(user.id)" type="button" class="btn btn-danger btn-sm">Delete</button>
-          </td>
-        </tr>
+        @for (user of users; track user; let i = $index) {
+          <tbody>
+            @if (user.username!='admin') {
+              <tr>
+                <th scope="row">{{ i }}</th>
+                <td>{{ user.name }}</td>
+                <td>{{ user.username }}</td>
+                <td>{{ user.email }}</td>
+                <td>{{ user.address }}</td>
+                <td>{{ user.role }}</td>
+                <td><button [routerLink]="['/users/modify/user/', user.id]" class="btn btn-secondary btn-sm">Modify</button>   <button (click)="deleteUser(user.id)" type="button" class="btn btn-danger btn-sm">Delete</button>
+              </td>
+            </tr>
+          }
         </tbody>
-      </table>
-    </div>
+      }
+    </table>
   </div>
+</div>
 </section>

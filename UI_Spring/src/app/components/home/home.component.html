@@ -5,9 +5,11 @@
         <h2 class="section-title">
           <span>Market</span>
         </h2>
-        <div *ngIf="gameAdded" class="alert alert-success">
-          {{ gameAdded }}
-        </div>
+        @if (gameAdded) {
+          <div class="alert alert-success">
+            {{ gameAdded }}
+          </div>
+        }
       </div>
     </div>
 
@@ -38,28 +40,38 @@
     <hr class="my-4">
     <!-- Game Cards -->
     <div class="row gy-5 gx-4 g-xl-5">
-      <div class="col-lg-6" *ngFor="let item of games">
-        <article class="card post-card h-100 border-0 bg-transparent">
-          <div class="card-body">
-            <a class="d-block" [routerLink]="['/games/', item.id]" title="{{ item.name }}">
-              <div class="post-image position-relative" *ngFor="let game of games; let i = index">
-                <img *ngIf="imageUrls[i]" class="w-100 h-auto rounded"
-                [src]="imageUrls[i]" alt="{{ game.name }}" width="970" height="500">              
-              </div>
-            </a>
-            <h2 class="mb-3 post-title">{{ item.name }}</h2>
-            <p>{{ item.description }}</p>
-            <p>Price: {{ item.price }}€</p>
-            <p>Stock: {{ item.avaiblity }}</p>
-            <button *ngIf="item.avaiblity > 0" (click)="addToCart(item)" class="btn btn-dark">
-              <i class="ti ti-shopping-cart-plus"></i>Add to cart
-            </button>
-            <button *ngIf="item.avaiblity == 0" [disabled]="true" class="btn btn-dark">
-              <i class="ti ti-shopping-cart-x"></i>Out of stock
-            </button>
-          </div>
-        </article>
-      </div>
+      @for (item of games; track item) {
+        <div class="col-lg-6">
+          <article class="card post-card h-100 border-0 bg-transparent">
+            <div class="card-body">
+              <a class="d-block" [routerLink]="['/games/', item.id]" title="{{ item.name }}">
+                @for (game of games; track game; let i = $index) {
+                  <div class="post-image position-relative">
+                    @if (imageUrls[i]) {
+                      <img class="w-100 h-auto rounded"
+                        [src]="imageUrls[i]" alt="{{ game.name }}" width="970" height="500">
+                    }
+                  </div>
+                }
+              </a>
+              <h2 class="mb-3 post-title">{{ item.name }}</h2>
+              <p>{{ item.description }}</p>
+              <p>Price: {{ item.price }}€</p>
+              <p>Stock: {{ item.avaiblity }}</p>
+              @if (item.avaiblity > 0) {
+                <button (click)="addToCart(item)" class="btn btn-dark">
+                  <i class="ti ti-shopping-cart-plus"></i>Add to cart
+                </button>
+              }
+              @if (item.avaiblity == 0) {
+                <button [disabled]="true" class="btn btn-dark">
+                  <i class="ti ti-shopping-cart-x"></i>Out of stock
+                </button>
+              }
+            </div>
+          </article>
+        </div>
+      }
 
       <!-- Pagination -->
       <div class="text-center">
@@ -70,9 +82,11 @@
                 <span aria-hidden="true">&laquo;</span>
               </button>
             </li>
-            <li *ngFor="let pageNumber of totalPages" class="page-item" [ngClass]="{ 'active': pageNumber === currentPage }">
-              <button class="page-link" (click)="changePage(pageNumber)">{{ pageNumber }}</button>
-            </li>
+            @for (pageNumber of totalPages; track pageNumber) {
+              <li class="page-item" [ngClass]="{ 'active': pageNumber === currentPage }">
+                <button class="page-link" (click)="changePage(pageNumber)">{{ pageNumber }}</button>
+              </li>
+            }
             <li class="page-item" [ngClass]="{ 'disabled': currentPage === totalPages.length }">
               <button class="page-link" (click)="changePage(currentPage + 1)" aria-label="Next">
                 <span aria-hidden="true">&raquo;</span>

@@ -1,12 +1,14 @@
-import {Component, OnInit} from '@angular/core';
+import {Component, OnInit, ChangeDetectionStrategy} from '@angular/core';
 import {AuthService} from "../../../../services/auth.service";
 import {ActivatedRoute, Router} from "@angular/router";
 import {UserService} from "../../../../services/user.service";
 
 @Component({
-  selector: 'app-addmodify',
-  templateUrl: './addmodify.component.html',
-  styleUrl: './addmodify.component.css'
+    selector: 'app-addmodify',
+    templateUrl: './addmodify.component.html',
+    styleUrl: './addmodify.component.css',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class AddmodifyComponent implements OnInit{
   err=undefined;
