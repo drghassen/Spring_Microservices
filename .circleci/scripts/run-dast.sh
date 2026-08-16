@@ -4,12 +4,16 @@ set -Eeuo pipefail
 
 source "$(dirname "$0")/lib/application-images.sh"
 
+readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly ZAP_IMAGE="ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef"
 readonly ZAP_REPORT_DIR="$PWD/reports/zap"
 readonly ZAP_WORK_DIR="/zap/wrk"
+readonly ZAP_SCRIPT_DIR="/zap/scripts"
+readonly ZAP_JWT_AUTH_HOOK="${ZAP_SCRIPT_DIR}/zap-jwt-auth-hook.py"
 readonly GATEWAY_TARGET_URL="http://gateway:8222"
 readonly CLIENT_TARGET_URL="http://client:8080/"
 readonly GATEWAY_HEALTH_URL="${GATEWAY_TARGET_URL}/actuator/health"
+readonly AUTH_LOGIN_URL="${GATEWAY_TARGET_URL}/api/v1/auth/login"
 
 declare -a SCAN_ERRORS=()
 declare -a SECURITY_FINDINGS_HIGH=()
@@ -26,8 +30,10 @@ prepare_zap_report_dir() {
       sudo chown -R "$(id -u):$(id -g)" "$ZAP_REPORT_DIR"
     fi
   fi
-  find "$ZAP_REPORT_DIR" -type d -exec chmod 0755 {} +
-  find "$ZAP_REPORT_DIR" -type f -exec chmod 0644 {} +
+  # The ZAP image runs as its internal "zap" user. CircleCI owns the bind
+  # mount as "circleci", so make the report mount writable by the container.
+  find "$ZAP_REPORT_DIR" -type d -exec chmod 0777 {} +
+  find "$ZAP_REPORT_DIR" -type f -exec chmod 0666 {} +
 
   echo "ZAP report directory prepared for Docker bind mount:"
   id
@@ -45,11 +51,17 @@ zap_network() {
 }
 
 zap_docker_base() {
+  local -a env_args=()
+
+  [[ -n "${DAST_JWT_TOKEN:-}" ]] && env_args+=(-e DAST_JWT_TOKEN)
+  [[ -n "${DAST_AUTH_USERNAME+x}" ]] && env_args+=(-e DAST_AUTH_USERNAME)
+  [[ -n "${DAST_AUTH_PASSWORD+x}" ]] && env_args+=(-e DAST_AUTH_PASSWORD)
+
   docker run --rm \
-    --user "$(id -u):$(id -g)" \
     --network "$(zap_network)" \
-    -e "HOME=${ZAP_WORK_DIR}" \
+    "${env_args[@]}" \
     -v "${ZAP_REPORT_DIR}:${ZAP_WORK_DIR}:rw" \
+    -v "${SCRIPT_DIR}:${ZAP_SCRIPT_DIR}:ro" \
     "$ZAP_IMAGE" \
     "$@"
 }
@@ -91,6 +103,41 @@ verify_zap_network_connectivity() {
     record_scan_error "zap-network" "ZAP container cannot resolve gateway or reach ${GATEWAY_HEALTH_URL}"
     return 1
   }
+}
+
+configure_dast_jwt_token() {
+  local token
+
+  if [[ -n "${DAST_JWT_TOKEN:-}" ]]; then
+    echo "DAST authentication: using JWT from DAST_JWT_TOKEN."
+    return 0
+  fi
+
+  if [[ -n "${DAST_AUTH_USERNAME:-}" && -n "${DAST_AUTH_PASSWORD+x}" ]]; then
+    echo "DAST authentication: requesting JWT with DAST_AUTH_USERNAME/DAST_AUTH_PASSWORD."
+    token="$(zap_docker_base bash -lc "
+      set -euo pipefail
+      jq -cn --arg username \"\$DAST_AUTH_USERNAME\" --arg password \"\$DAST_AUTH_PASSWORD\" \
+        '{username: \$username, password: \$password}' \
+        | curl -fsS -H 'Content-Type: application/json' --data-binary @- '${AUTH_LOGIN_URL}' \
+        | jq -er '.message // .token // .access_token'
+    ")" || {
+      record_scan_error "auth" "DAST authentication: failed to obtain JWT from ${AUTH_LOGIN_URL}"
+      return 1
+    }
+
+    [[ -n "$token" ]] || {
+      record_scan_error "auth" "DAST authentication: login response did not contain a JWT"
+      return 1
+    }
+
+    export DAST_JWT_TOKEN="$token"
+    echo "DAST authentication: JWT acquired for authenticated scans."
+    return 0
+  fi
+
+  record_scan_error "auth" "DAST authentication requires DAST_JWT_TOKEN or DAST_AUTH_USERNAME/DAST_AUTH_PASSWORD CircleCI secrets"
+  return 1
 }
 
 validate_openapi_document() {
@@ -137,9 +184,21 @@ validate_openapi_document() {
     and (.paths | length > 0)
     and (.servers | type == "array")
     and (.servers | length > 0)
-    and ((.status // empty) == empty)
-    and ((.error // empty) == empty)
+    and (has("status") | not)
+    and (has("error") | not)
   ' "$openapi_file" >/dev/null || {
+    echo "OpenAPI validation response preview for ${target_name}:" >&2
+    jq -c '{
+      openapi,
+      title: .info.title,
+      servers,
+      paths_type: (.paths | type),
+      path_count: (try (.paths | length) catch null),
+      status,
+      error,
+      path,
+      message
+    }' "$openapi_file" >&2 || true
     record_scan_error "$target_name" "OpenAPI validation: FAILED - missing openapi/info/paths/servers or Spring error JSON"
     return 1
   }
@@ -249,6 +308,24 @@ run_zap_scan() {
   gate_high_risk_alerts "$target_name"
 }
 
+zap_frontend_full_scan() {
+  local target_name="$1"
+  local target_url="$2"
+
+  require_url_with_scheme "$target_name target" "$target_url" || return 1
+
+  run_zap_scan "$target_name" \
+    zap-full-scan.py \
+    -t "$target_url" \
+    -m 2 \
+    -j \
+    --client-spider \
+    -I \
+    --hook "$ZAP_JWT_AUTH_HOOK" \
+    -J "${ZAP_WORK_DIR}/${target_name}.json" \
+    -r "${ZAP_WORK_DIR}/${target_name}.html"
+}
+
 zap_baseline() {
   local target_name="$1"
   local target_url="$2"
@@ -260,7 +337,7 @@ zap_baseline() {
     -t "$target_url" \
     -m 2 \
     -I \
-    --autooff \
+    --hook "$ZAP_JWT_AUTH_HOOK" \
     -J "${ZAP_WORK_DIR}/${target_name}.json" \
     -r "${ZAP_WORK_DIR}/${target_name}.html"
 }
@@ -281,6 +358,7 @@ zap_api_scan() {
     -O "$target_url" \
     -T 10 \
     -I \
+    --hook "$ZAP_JWT_AUTH_HOOK" \
     -J "${ZAP_WORK_DIR}/${target_name}.json" \
     -r "${ZAP_WORK_DIR}/${target_name}.html"
 }
@@ -288,7 +366,11 @@ zap_api_scan() {
 dast_scan_failed=0
 
 if verify_zap_network_connectivity; then
-  if ! zap_baseline client "$CLIENT_TARGET_URL"; then
+  if ! configure_dast_jwt_token; then
+    dast_scan_failed=1
+  fi
+
+  if ! zap_frontend_full_scan client "$CLIENT_TARGET_URL"; then
     dast_scan_failed=1
   fi
 
@@ -297,15 +379,23 @@ if verify_zap_network_connectivity; then
   fi
 
   declare -A API_DOC_PATHS=(
-    [users]="/users/v3/api-docs"
-    [games]="/games/v3/api-docs"
-    [library]="/library/v3/api-docs"
-    [order]="/order/v3/api-docs"
-    [payment]="/payment/v3/api-docs"
+    [users]="/USER-SERVICE/users/v3/api-docs"
+    [games]="/GAMES-SERVICE/games/v3/api-docs"
+    [library]="/LIBRARY-SERVICE/library/v3/api-docs"
+    [order]="/ORDER-SERVICE/order/v3/api-docs"
+    [payment]="/PAYMENT-SERVICE/payment/v3/api-docs"
+  )
+
+  declare -A API_TARGET_URLS=(
+    [users]="${GATEWAY_TARGET_URL}/USER-SERVICE"
+    [games]="${GATEWAY_TARGET_URL}/GAMES-SERVICE"
+    [library]="${GATEWAY_TARGET_URL}/LIBRARY-SERVICE"
+    [order]="${GATEWAY_TARGET_URL}/ORDER-SERVICE"
+    [payment]="${GATEWAY_TARGET_URL}/PAYMENT-SERVICE"
   )
 
   for api in users games library order payment; do
-    if ! zap_api_scan "${api}-api" "${GATEWAY_TARGET_URL}${API_DOC_PATHS[$api]}" "$GATEWAY_TARGET_URL"; then
+    if ! zap_api_scan "${api}-api" "${GATEWAY_TARGET_URL}${API_DOC_PATHS[$api]}" "${API_TARGET_URLS[$api]}"; then
       dast_scan_failed=1
     fi
   done
