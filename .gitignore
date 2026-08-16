@@ -52,3 +52,6 @@ reports/zap/*.key
 /ci-image-archives/
 /UI_Spring/coverage/
 .trivy-cache/
+/reports/trivy-filesystem.json
+/reports/dast.log
+/reports/container-integration.log

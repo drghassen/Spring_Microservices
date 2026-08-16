@@ -40,6 +40,7 @@ zap_baseline() {
   local target_url="$2"
 
   docker run --rm \
+    --user "$(id -u):$(id -g)" \
     --network "${COMPOSE_PROJECT_NAME}_microservices" \
     -v "$PWD/reports/zap:/zap/wrk" \
     "$ZAP_IMAGE" \
@@ -59,16 +60,17 @@ zap_api_scan() {
   local specification_url="$2"
 
   # The OpenAPI documents declare localhost as their server. -O rewrites the
-  # hostname to the Compose gateway, allowing ZAP to exercise the real routes
-  # from inside the isolated CI network.
+  # hostname AND port to the Compose gateway, allowing ZAP to exercise the
+  # real routes from inside the isolated CI network.
   docker run --rm \
+    --user "$(id -u):$(id -g)" \
     --network "${COMPOSE_PROJECT_NAME}_microservices" \
     -v "$PWD/reports/zap:/zap/wrk" \
     "$ZAP_IMAGE" \
     zap-api-scan.py \
     -t "$specification_url" \
     -f openapi \
-    -O gateway \
+    -O gateway:8222 \
     -T 10 \
     -I \
     -J "/zap/wrk/${target_name}.json" \
@@ -79,8 +81,6 @@ zap_api_scan() {
 
 dast_scan_failed=0
 
-# Continue after a failed target so the alert contains reports for every
-# intended surface, not just the first endpoint with a finding.
 if ! zap_baseline client http://client:8080/; then
   dast_scan_failed=1
 fi
@@ -89,9 +89,6 @@ if ! zap_baseline gateway http://gateway:8222/actuator/health; then
   dast_scan_failed=1
 fi
 
-# API scanning imports the published contracts and performs active tests only
-# against the disposable Compose stack. Authenticated routes return 401 here;
-# authenticated DAST coverage can be added later with a dedicated test account.
 for api in users games library order payment; do
   if ! zap_api_scan "${api}-api" "http://gateway:8222/${api}/v3/api-docs"; then
     dast_scan_failed=1
