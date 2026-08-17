@@ -8,10 +8,14 @@ readonly APP_SERVICES=(
 )
 
 configure_candidate_images() {
-  : "${CIRCLE_SHA1:?CIRCLE_SHA1 must be defined by CircleCI}"
-  : "${CIRCLE_WORKFLOW_ID:?CIRCLE_WORKFLOW_ID must be defined by CircleCI}"
+  : "${IMAGE_TAG:?IMAGE_TAG must be defined by CircleCI config as build-<< pipeline.number >>}"
 
-  export IMAGE_TAG="${CIRCLE_SHA1}-${CIRCLE_WORKFLOW_ID}"
+  [[ "$IMAGE_TAG" =~ ^build-[0-9]+$ ]] || {
+    echo "IMAGE_TAG must match build-<pipeline.number>; got: ${IMAGE_TAG}" >&2
+    exit 1
+  }
+
+  export IMAGE_TAG
   export IMAGE_REPOSITORY_PREFIX="${IMAGE_REPOSITORY_PREFIX:-ci.local}"
 }
 

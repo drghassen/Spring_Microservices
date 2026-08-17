@@ -4,6 +4,13 @@ orbs:
   browser-tools: circleci/browser-tools@1.4.8
 
 commands:
+  configure-candidate-image-tag:
+    description: Export the pipeline-scoped Docker tag used by every candidate image job.
+    steps:
+      - run:
+          name: Configure candidate image tag
+          command: echo 'export IMAGE_TAG=build-<< pipeline.number >>' >> "$BASH_ENV"
+
   trust-github-ssh-host:
     description: Install GitHub's published ED25519 host key for Sonar SCM analysis.
     steps:
@@ -18,6 +25,9 @@ commands:
   load-candidate-images:
     description: Load the frontend and backend image archives produced by the parallel build jobs.
     steps:
+      - run:
+          name: Configure candidate image tag
+          command: echo 'export IMAGE_TAG=build-<< pipeline.number >>' >> "$BASH_ENV"
       - run:
           name: Load the immutable candidate images
           command: bash .circleci/scripts/load-application-images.sh
@@ -218,6 +228,7 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
+      - configure-candidate-image-tag
       - run:
           name: Build the immutable frontend image
           command: bash .circleci/scripts/build-application-images.sh client
@@ -237,6 +248,7 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
+      - configure-candidate-image-tag
       - run:
           name: Build the immutable backend images
           command: |
