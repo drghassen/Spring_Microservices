@@ -47,6 +47,9 @@ configure_runtime_environment() {
 
   export JWT_SECRET="$(openssl rand -base64 48)"
   export COMPOSE_PROJECT_NAME="ci${CIRCLE_BUILD_NUM}"
+  if [[ "${DAST_AUTH_USERNAME:-}" == "admin" && -n "${DAST_AUTH_PASSWORD+x}" && -z "${ADMIN_PASSWORD+x}" ]]; then
+    export ADMIN_PASSWORD="$DAST_AUTH_PASSWORD"
+  fi
 }
 
 collect_compose_logs_and_cleanup() {

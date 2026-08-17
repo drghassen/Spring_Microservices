@@ -13,7 +13,8 @@ readonly ZAP_JWT_AUTH_HOOK="${ZAP_SCRIPT_DIR}/zap-jwt-auth-hook.py"
 readonly GATEWAY_TARGET_URL="http://gateway:8222"
 readonly CLIENT_TARGET_URL="http://client:8080/"
 readonly GATEWAY_HEALTH_URL="${GATEWAY_TARGET_URL}/actuator/health"
-readonly AUTH_LOGIN_URL="${GATEWAY_TARGET_URL}/api/v1/auth/login"
+readonly AUTH_LOGIN_URL="${GATEWAY_TARGET_URL}/USER-SERVICE/api/v1/auth/login"
+readonly AUTH_VALIDATION_URL_BASE="${GATEWAY_TARGET_URL}/USER-SERVICE/api/v1/users/username"
 
 declare -a SCAN_ERRORS=()
 declare -a SECURITY_FINDINGS_HIGH=()
@@ -54,6 +55,7 @@ zap_docker_base() {
   local -a env_args=()
 
   [[ -n "${DAST_JWT_TOKEN:-}" ]] && env_args+=(-e DAST_JWT_TOKEN)
+  [[ -n "${DAST_AUTH_URL_REGEX:-}" ]] && env_args+=(-e DAST_AUTH_URL_REGEX)
   [[ -n "${DAST_AUTH_USERNAME+x}" ]] && env_args+=(-e DAST_AUTH_USERNAME)
   [[ -n "${DAST_AUTH_PASSWORD+x}" ]] && env_args+=(-e DAST_AUTH_PASSWORD)
 
@@ -110,7 +112,8 @@ configure_dast_jwt_token() {
 
   if [[ -n "${DAST_JWT_TOKEN:-}" ]]; then
     echo "DAST authentication: using JWT from DAST_JWT_TOKEN."
-    return 0
+    validate_dast_jwt_token "$DAST_JWT_TOKEN"
+    return $?
   fi
 
   if [[ -n "${DAST_AUTH_USERNAME:-}" && -n "${DAST_AUTH_PASSWORD+x}" ]]; then
@@ -120,7 +123,7 @@ configure_dast_jwt_token() {
       jq -cn --arg username \"\$DAST_AUTH_USERNAME\" --arg password \"\$DAST_AUTH_PASSWORD\" \
         '{username: \$username, password: \$password}' \
         | curl -fsS -H 'Content-Type: application/json' --data-binary @- '${AUTH_LOGIN_URL}' \
-        | jq -er '.message // .token // .access_token'
+        | jq -er '.message | select(type == \"string\" and length > 0)'
     ")" || {
       record_scan_error "auth" "DAST authentication: failed to obtain JWT from ${AUTH_LOGIN_URL}"
       return 1
@@ -132,12 +135,82 @@ configure_dast_jwt_token() {
     }
 
     export DAST_JWT_TOKEN="$token"
-    echo "DAST authentication: JWT acquired for authenticated scans."
+    validate_dast_jwt_token "$DAST_JWT_TOKEN" || return 1
+    echo "DAST authentication: JWT acquired and validated for authenticated API scans."
     return 0
   fi
 
   record_scan_error "auth" "DAST authentication requires DAST_JWT_TOKEN or DAST_AUTH_USERNAME/DAST_AUTH_PASSWORD CircleCI secrets"
   return 1
+}
+
+jwt_payload_json() {
+  local token="$1"
+
+  jq -Rer '
+    split(".") | select(length == 3) | .[1]
+    | gsub("-"; "+")
+    | gsub("_"; "/")
+    | . as $payload
+    | ($payload | length % 4) as $remainder
+    | if $remainder == 0 then $payload
+      elif $remainder == 2 then $payload + "=="
+      elif $remainder == 3 then $payload + "="
+      else error("invalid JWT base64url payload")
+      end
+    | @base64d
+    | fromjson
+  ' <<< "$token"
+}
+
+validate_dast_jwt_token() {
+  local token="$1"
+  local claims_json
+  local subject
+  local encoded_subject
+  local validation_url
+  local status
+  local now
+
+  if [[ ! "$token" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+    record_scan_error "auth" "DAST authentication: supplied token is not a compact JWT"
+    return 1
+  fi
+
+  claims_json="$(jwt_payload_json "$token")" || {
+    record_scan_error "auth" "DAST authentication: JWT payload is not valid JSON"
+    return 1
+  }
+
+  now="$(date +%s)"
+  jq -e --argjson now "$now" '
+    type == "object"
+    and (.sub | type == "string" and length > 0)
+    and (.exp | type == "number" and . > ($now + 60))
+    and (.roles | type == "array" and length > 0)
+  ' <<< "$claims_json" >/dev/null || {
+    record_scan_error "auth" "DAST authentication: JWT is missing required claims or expires too soon"
+    return 1
+  }
+
+  subject="$(jq -r '.sub' <<< "$claims_json")"
+  encoded_subject="$(jq -nr --arg value "$subject" '$value | @uri')"
+  validation_url="${AUTH_VALIDATION_URL_BASE}/${encoded_subject}"
+
+  status="$(zap_docker_base bash -lc "
+    set -euo pipefail
+    curl -sS -o /dev/null -w '%{http_code}' \
+      -H \"Authorization: Bearer \${DAST_JWT_TOKEN}\" \
+      '${validation_url}'
+  ")" || {
+    record_scan_error "auth" "DAST authentication: failed to validate JWT against Gateway"
+    return 1
+  }
+
+  if [[ "$status" != "200" ]]; then
+    record_scan_error "auth" "DAST authentication: Gateway rejected JWT validation request with HTTP ${status}"
+    return 1
+  fi
 }
 
 validate_openapi_document() {
@@ -321,7 +394,6 @@ zap_frontend_full_scan() {
     -j \
     --client-spider \
     -I \
-    --hook "$ZAP_JWT_AUTH_HOOK" \
     -J "${ZAP_WORK_DIR}/${target_name}.json" \
     -r "${ZAP_WORK_DIR}/${target_name}.html"
 }
@@ -337,7 +409,6 @@ zap_baseline() {
     -t "$target_url" \
     -m 2 \
     -I \
-    --hook "$ZAP_JWT_AUTH_HOOK" \
     -J "${ZAP_WORK_DIR}/${target_name}.json" \
     -r "${ZAP_WORK_DIR}/${target_name}.html"
 }
@@ -346,6 +417,11 @@ zap_api_scan() {
   local target_name="$1"
   local specification_url="$2"
   local target_url="$3"
+
+  [[ -n "${DAST_JWT_TOKEN:-}" ]] || {
+    record_scan_error "$target_name" "Authenticated API scan blocked because DAST authentication did not produce a validated JWT"
+    return 1
+  }
 
   validate_openapi_document "$target_name" "$specification_url" "$target_url" || return 1
 
@@ -364,17 +440,20 @@ zap_api_scan() {
 }
 
 dast_scan_failed=0
+auth_ready=0
 
 if verify_zap_network_connectivity; then
-  if ! configure_dast_jwt_token; then
-    dast_scan_failed=1
-  fi
-
   if ! zap_frontend_full_scan client "$CLIENT_TARGET_URL"; then
     dast_scan_failed=1
   fi
 
   if ! zap_baseline gateway "$GATEWAY_HEALTH_URL"; then
+    dast_scan_failed=1
+  fi
+
+  if configure_dast_jwt_token; then
+    auth_ready=1
+  else
     dast_scan_failed=1
   fi
 
@@ -394,11 +473,15 @@ if verify_zap_network_connectivity; then
     [payment]="${GATEWAY_TARGET_URL}/PAYMENT-SERVICE"
   )
 
-  for api in users games library order payment; do
-    if ! zap_api_scan "${api}-api" "${GATEWAY_TARGET_URL}${API_DOC_PATHS[$api]}" "${API_TARGET_URLS[$api]}"; then
-      dast_scan_failed=1
-    fi
-  done
+  if (( auth_ready )); then
+    for api in users games library order payment; do
+      if ! zap_api_scan "${api}-api" "${GATEWAY_TARGET_URL}${API_DOC_PATHS[$api]}" "${API_TARGET_URLS[$api]}"; then
+        dast_scan_failed=1
+      fi
+    done
+  else
+    echo "Skipping authenticated API scans because DAST authentication failed." >&2
+  fi
 else
   dast_scan_failed=1
 fi

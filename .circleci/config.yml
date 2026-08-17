@@ -390,6 +390,7 @@ workflows:
       - dast-scan:
           context:
             - security-alerts
+            - DAST
           requires:
             - container-integration
       # Stage 7: only master publishes images that passed every preceding gate.

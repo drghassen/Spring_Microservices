@@ -35,6 +35,12 @@ public class UserServiceApplication {
 			try {
 				var adminExists = userRepository.findByUsername(ADMIN_USERNAME);
 				if (adminExists.isPresent()) {
+					if (adminPassword != null && !adminPassword.isBlank()) {
+						UserApp admin = adminExists.get();
+						admin.setPassword(securityConfiguration.passwordEncoder().encode(adminPassword));
+						userRepository.save(admin);
+						log.info("{} password synchronized from ADMIN_PASSWORD", ADMIN_USERNAME);
+					}
 					log.info("{} already exists", ADMIN_USERNAME);
 					return;
 				}

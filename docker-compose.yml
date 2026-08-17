@@ -153,6 +153,7 @@ services:
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
       UPLOADS_USER_DIR: /app/uploads/user
       JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env or the shell before starting Docker Compose}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
     volumes:
       - user-uploads:/app/uploads/user
     networks:
