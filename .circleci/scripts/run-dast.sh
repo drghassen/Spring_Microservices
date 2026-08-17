@@ -409,8 +409,8 @@ zap_baseline() {
     -t "$target_url" \
     -m 2 \
     -I \
-    -J "${ZAP_WORK_DIR}/${target_name}.json" \
-    -r "${ZAP_WORK_DIR}/${target_name}.html"
+    -J "${target_name}.json" \
+    -r "${target_name}.html"
 }
 
 zap_api_scan() {
