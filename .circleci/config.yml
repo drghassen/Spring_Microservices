@@ -277,18 +277,40 @@ jobs:
           at: .
       - load-candidate-images
       - run:
-          name: Generate SBOMs and scan every candidate image with Trivy
+          name: Scan every candidate image with Trivy
           command: bash .circleci/scripts/scan-application-images.sh
       - send-security-alert-on-failure:
           scanner: Trivy container image scan
           reports: reports/trivy-images
-      - persist_to_workspace:
-          root: reports
-          paths:
-            - sbom
       - store_artifacts:
           path: reports
           destination: image-trivy-scan
+
+  dependency-track-sbom-publish:
+    machine: true
+    resource_class: drghassen/sonar-vm
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Generate CycloneDX 1.6 SBOMs and publish to Dependency-Track
+          command: bash .circleci/scripts/publish-sboms-dependency-track.sh
+      - send-security-alert-on-failure:
+          scanner: Dependency-Track SBOM publication
+          reports: reports/dependency-track
+      - persist_to_workspace:
+          root: reports
+          paths:
+            - sbom-reports
+      - store_artifacts:
+          path: reports/sbom-reports
+          destination: sbom-reports
+      - store_artifacts:
+          path: reports/dependency-track
+          destination: dependency-track
 
   container-integration:
     machine:
@@ -394,18 +416,25 @@ workflows:
           requires:
             - frontend-image-build
             - backend-image-build
-      # Stage 5: Compose starts those images and validates the runtime integration.
-      - container-integration:
+      # Stage 5: Syft publishes CycloneDX 1.6 SBOMs from the exact candidate images.
+      - dependency-track-sbom-publish:
+          context:
+            - sonarqube
+            - security-alerts
           requires:
             - image-trivy-scan
-      # Stage 6: a fresh stack from the same images is assessed with OWASP ZAP.
+      # Stage 6: Compose starts those images and validates the runtime integration.
+      - container-integration:
+          requires:
+            - dependency-track-sbom-publish
+      # Stage 7: a fresh stack from the same images is assessed with OWASP ZAP.
       - dast-scan:
           context:
             - security-alerts
             - DAST
           requires:
             - container-integration
-      # Stage 7: only master publishes images that passed every preceding gate.
+      # Stage 8: only master publishes images that passed every preceding gate.
       - release-acr:
           context:
             - acr-publish

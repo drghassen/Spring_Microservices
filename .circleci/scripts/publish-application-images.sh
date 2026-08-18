@@ -6,7 +6,7 @@ source "$(dirname "$0")/lib/application-images.sh"
 
 readonly ORAS_IMAGE="ghcr.io/oras-project/oras:v1.3.0@sha256:6ce045ce069a89934d6666b8b49f9c4c0145201bd6de6dbe2aee267814c55468"
 readonly SBOM_ARTIFACT_TYPE="application/vnd.cyclonedx+json"
-readonly SBOM_DIRECTORY="sbom"
+readonly SBOM_DIRECTORY="sbom-reports"
 
 : "${ACR_LOGIN_SERVER:?ACR_LOGIN_SERVER must be defined in the acr-publish CircleCI context}"
 : "${ACR_USERNAME:?ACR_USERNAME must be defined in the acr-publish CircleCI context}"
@@ -15,8 +15,9 @@ readonly SBOM_DIRECTORY="sbom"
 configure_candidate_images
 
 for service in "${APP_SERVICES[@]}"; do
-  [[ -s "${SBOM_DIRECTORY}/${service}.cdx.json" ]] || {
-    echo "SBOM is missing for ${service}: ${SBOM_DIRECTORY}/${service}.cdx.json" >&2
+  sbom_file="${SBOM_DIRECTORY}/${service}/${service}-${IMAGE_TAG}.cdx.json"
+  [[ -s "$sbom_file" ]] || {
+    echo "SBOM is missing for ${service}: ${sbom_file}" >&2
     exit 1
   }
 done
@@ -64,7 +65,7 @@ for service in "${APP_SERVICES[@]}"; do
     --no-tty \
     --artifact-type "$SBOM_ARTIFACT_TYPE" \
     "$target_reference" \
-    "${service}.cdx.json:${SBOM_ARTIFACT_TYPE}"
+    "${service}/${service}-${IMAGE_TAG}.cdx.json:${SBOM_ARTIFACT_TYPE}"
 
   printf '%s\n' "$target_reference" >> reports/acr-image-manifest.txt
 done

@@ -399,7 +399,7 @@ It is intentionally declarative: the executable CI logic is split into versioned
 
 ## Pipeline flow
 
-Every branch and pull request must pass Trivy source, secret and IaC scans; backend tests with JaCoCo and the SonarQube quality gate; Angular headless tests and a production build; then Docker image build, SBOM generation, Trivy image scans, Docker Compose smoke tests, Eureka registration checks, and a passive OWASP ZAP baseline scan.
+Every branch and pull request must pass Trivy source, secret and IaC scans; backend tests with JaCoCo and the SonarQube quality gate; Angular headless tests and a production build; then Docker image build, Trivy image scans, Syft CycloneDX 1.6 SBOM generation and Dependency-Track publication, Docker Compose smoke tests, Eureka registration checks, and a passive OWASP ZAP baseline scan.
 
 On non-`master` branches, the complete container qualification runs against local CI images. On `master`, that same qualification job builds the images once and pushes those already-tested local images to Azure Container Registry. Kubernetes deployment and image signing are deliberately outside this pipeline until their target environment and OIDC identity are configured.
 
@@ -410,20 +410,33 @@ Create these organization contexts before enabling the project:
 | Context | Variables | Purpose |
 | --- | --- | --- |
 | `sonarqube` | `SONAR_HOST_URL`, `SONAR_TOKEN` | Runs analysis and waits for the quality gate on the self-hosted SonarQube runner. |
+| `dependency-track` | `DTRACK_URL`, `DTRACK_API_KEY`, `DTRACK_PARENT_UUID` | Publishes one CycloneDX 1.6 SBOM per candidate image to the existing Dependency-Track API from the self-hosted runner. |
 | `acr-publish` | `ACR_LOGIN_SERVER`, `ACR_USERNAME`, `ACR_PASSWORD` | Grants the `master`-only publication job permission to push to ACR. |
 
 The pipeline generates an ephemeral JWT secret only for Compose validation. Runtime deployments must inject their own secret through a secret manager.
 
 ### Private SonarQube runner
 
-The `backend-quality` job is assigned to the `drghassen/sonar-vm` CircleCI machine runner. This runner is installed on the VM hosting SonarQube, so the `sonarqube` context must use `SONAR_HOST_URL=http://127.0.0.1:9000`. Keep `SONAR_TOKEN` only in the CircleCI context; never commit it to the repository.
+The SonarQube jobs and the Dependency-Track SBOM publication job are assigned to the `drghassen/sonar-vm` CircleCI machine runner. This runner is installed on the VM hosting SonarQube and Dependency-Track, so the `sonarqube` context must use a `SONAR_HOST_URL` reachable from that VM. Keep `SONAR_TOKEN` only in the CircleCI context; never commit it to the repository.
+
+### Dependency-Track SBOM publication
+
+Dependency-Track is expected to be running before the pipeline starts. CircleCI does not start or reinstall it. Configure these values in the `dependency-track` CircleCI context:
+
+- `DTRACK_URL`: Dependency-Track API base URL reachable from the `drghassen/sonar-vm` runner, for example `http://172.29.208.5:8080` or `http://localhost:8080`.
+- `DTRACK_API_KEY`: dedicated Dependency-Track API key for CircleCI. Do not use admin credentials.
+- `DTRACK_PARENT_UUID`: collection project UUID, currently `65d253c6-e059-4b3c-b86e-f5e197852ac6`.
+
+The API key team needs `BOM_UPLOAD`, `PROJECT_CREATION_UPLOAD`, and `VIEW_PORTFOLIO`. `BOM_UPLOAD` accepts SBOM uploads, `PROJECT_CREATION_UPLOAD` allows `autoCreate=true` child project creation during upload, and `VIEW_PORTFOLIO` lets the pipeline validate the configured parent project before publishing. Do not grant broader permissions such as `PORTFOLIO_MANAGEMENT` unless another process requires them. If Dependency-Track portfolio access control is enabled, also assign the team access to the parent collection project.
+
+The SBOM job uses Syft `1.50.0` and writes canonical artifacts as `sbom-reports/<service>/<service>-<IMAGE_TAG>.cdx.json`. The same files are uploaded to Dependency-Track and later attached to ACR images with ORAS.
 
 ## ACR image tag
 
-All pushed images use the immutable full commit SHA:
+All pushed images use the immutable pipeline image tag:
 
 ```text
-<ACR_LOGIN_SERVER>/user-service:<full-commit-SHA>
+<ACR_LOGIN_SERVER>/user-service:build-<pipeline.number>
 ```
 
 No mutable `latest` tag is pushed.

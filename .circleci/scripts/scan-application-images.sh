@@ -8,7 +8,7 @@ readonly TRIVY_IMAGE="aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e619
 
 configure_candidate_images
 ensure_jq
-mkdir -p reports/trivy-images reports/sbom .trivy-cache
+mkdir -p reports/trivy-images .trivy-cache
 
 trivy() {
   docker run --rm \
@@ -48,14 +48,6 @@ mapfile -t image_references < <(candidate_image_references)
 for image in "${image_references[@]}"; do
   service="${image#*/}"
   service="${service%%:*}"
-
-  trivy image \
-    --format cyclonedx \
-    --output "/reports/sbom/${service}.cdx.json" \
-    --no-progress \
-    --skip-version-check \
-    --timeout 20m \
-    "$image"
 
   trivy image \
     --scanners vuln \
