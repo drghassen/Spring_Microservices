@@ -34,6 +34,7 @@
     <!-- ========================================================= -->
 
     <modules>
+        <module>database-migrations</module>
         <module>config-server</module>
         <module>discovery-service</module>
         <module>gateway</module>
