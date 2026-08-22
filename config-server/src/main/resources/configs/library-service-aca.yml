@@ -1,0 +1,6 @@
+spring:
+  data:
+    mongodb:
+      uri: ${MONGO_URI}
+      database: library
+      auto-index-creation: ${MONGO_AUTO_INDEX_CREATION:false}
