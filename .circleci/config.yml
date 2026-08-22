@@ -421,7 +421,7 @@ workflows:
       # Stage 5: Syft publishes CycloneDX 1.6 SBOMs from the exact candidate images.
       - dependency-track-sbom-publish:
           context:
-            - dependency-track
+            - sonarqube
             - security-alerts
           requires:
             - image-trivy-scan
