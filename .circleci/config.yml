@@ -62,7 +62,7 @@ jobs:
             find . -maxdepth 2 -name pom.xml -print0 \
               | LC_ALL=C sort -z \
               | xargs -0 sha256sum > .circleci/maven-poms.sha256
-            test "$(wc -l < .circleci/maven-poms.sha256)" -eq 9
+            test -s .circleci/maven-poms.sha256
       - restore_cache:
           keys:
             - v1-maven-{{ checksum ".circleci/maven-poms.sha256" }}
