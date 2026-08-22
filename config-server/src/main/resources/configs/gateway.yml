@@ -12,7 +12,10 @@ spring:
     gateway:
       discovery:
         locator:
-          enabled: true
+          # Explicit routes in GatewayConfig carry the JWT and role filters.
+          # Discovery locator routes do not, so exposing them would bypass
+          # the gateway authorization policy.
+          enabled: false
       globalcors:
         corsConfigurations:
           '[/**]':

@@ -326,6 +326,7 @@ jobs:
           name: Start containers and validate health checks plus Eureka registrations
           command: bash .circleci/scripts/run-container-integration.sh
       - store_artifacts:
+          when: always
           path: reports
           destination: container-integration
 
@@ -346,6 +347,7 @@ jobs:
           scanner: OWASP ZAP DAST scan
           reports: reports/zap
       - store_artifacts:
+          when: always
           path: reports
           destination: dast-scan
 

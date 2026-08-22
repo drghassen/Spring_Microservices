@@ -8,7 +8,7 @@ def zap_started(zap, target):
 
     gateway_api_url_regex = os.environ.get(
         "DAST_AUTH_URL_REGEX",
-        r"^http://gateway:8222/(USER-SERVICE|GAMES-SERVICE|ORDER-SERVICE|PAYMENT-SERVICE|LIBRARY-SERVICE)(/|$)",
+        r"^http://gateway:8222/(api/v1/|users/|games/|library/|order/|payment/)",
     )
 
     zap.replacer.add_rule(

@@ -13,8 +13,8 @@ readonly ZAP_JWT_AUTH_HOOK="${ZAP_SCRIPT_DIR}/zap-jwt-auth-hook.py"
 readonly GATEWAY_TARGET_URL="http://gateway:8222"
 readonly CLIENT_TARGET_URL="http://client:8080/"
 readonly GATEWAY_HEALTH_URL="${GATEWAY_TARGET_URL}/actuator/health"
-readonly AUTH_LOGIN_URL="${GATEWAY_TARGET_URL}/USER-SERVICE/api/v1/auth/login"
-readonly AUTH_VALIDATION_URL_BASE="${GATEWAY_TARGET_URL}/USER-SERVICE/api/v1/users/username"
+readonly AUTH_LOGIN_URL="${GATEWAY_TARGET_URL}/api/v1/auth/login"
+readonly AUTH_VALIDATION_URL_BASE="${GATEWAY_TARGET_URL}/api/v1/users/username"
 
 declare -a SCAN_ERRORS=()
 declare -a SECURITY_FINDINGS_HIGH=()
@@ -458,19 +458,19 @@ if verify_zap_network_connectivity; then
   fi
 
   declare -A API_DOC_PATHS=(
-    [users]="/USER-SERVICE/users/v3/api-docs"
-    [games]="/GAMES-SERVICE/games/v3/api-docs"
-    [library]="/LIBRARY-SERVICE/library/v3/api-docs"
-    [order]="/ORDER-SERVICE/order/v3/api-docs"
-    [payment]="/PAYMENT-SERVICE/payment/v3/api-docs"
+    [users]="/users/v3/api-docs"
+    [games]="/games/v3/api-docs"
+    [library]="/library/v3/api-docs"
+    [order]="/order/v3/api-docs"
+    [payment]="/payment/v3/api-docs"
   )
 
   declare -A API_TARGET_URLS=(
-    [users]="${GATEWAY_TARGET_URL}/USER-SERVICE"
-    [games]="${GATEWAY_TARGET_URL}/GAMES-SERVICE"
-    [library]="${GATEWAY_TARGET_URL}/LIBRARY-SERVICE"
-    [order]="${GATEWAY_TARGET_URL}/ORDER-SERVICE"
-    [payment]="${GATEWAY_TARGET_URL}/PAYMENT-SERVICE"
+    [users]="${GATEWAY_TARGET_URL}"
+    [games]="${GATEWAY_TARGET_URL}"
+    [library]="${GATEWAY_TARGET_URL}"
+    [order]="${GATEWAY_TARGET_URL}"
+    [payment]="${GATEWAY_TARGET_URL}"
   )
 
   if (( auth_ready )); then
