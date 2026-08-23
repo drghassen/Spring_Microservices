@@ -1,6 +1,6 @@
 eureka:
   instance:
-    hostname: ${EUREKA_HOSTNAME_USER:user-service}
+    hostname: ${EUREKA_HOSTNAME_GATEWAY:gateway}
     prefer-ip-address: false
     instance-id: ${spring.application.name}:${HOSTNAME:${random.uuid}}
     non-secure-port: 80
@@ -10,13 +10,12 @@ eureka:
     service-url:
       defaultZone: ${EUREKA_DEFAULT_ZONE:http://discovery-service/eureka}
 
-application:
-  config:
-    library-url: http://gateway/api/v1/library
+server:
+  forward-headers-strategy: native
 
 spring:
-  data:
-    mongodb:
-      uri: ${MONGO_URI}
-      database: users
-      auto-index-creation: ${MONGO_AUTO_INDEX_CREATION:false}
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: false

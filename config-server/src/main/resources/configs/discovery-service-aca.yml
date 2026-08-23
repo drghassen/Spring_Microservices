@@ -1,0 +1,6 @@
+eureka:
+  instance:
+    hostname: ${EUREKA_HOSTNAME_DISCOVERY:discovery-service}
+  server:
+    # Keep Eureka's safe default in ACA; local Docker may override it explicitly.
+    enable-self-preservation: true

@@ -1,3 +1,19 @@
+eureka:
+  instance:
+    hostname: ${EUREKA_HOSTNAME_PAYMENT:payment-service}
+    prefer-ip-address: false
+    instance-id: ${spring.application.name}:${HOSTNAME:${random.uuid}}
+    non-secure-port: 80
+    non-secure-port-enabled: true
+    secure-port-enabled: false
+  client:
+    service-url:
+      defaultZone: ${EUREKA_DEFAULT_ZONE:http://discovery-service/eureka}
+
+application:
+  config:
+    games-url: http://gateway/api/v1/games
+
 spring:
   jpa:
     hibernate:
