@@ -19,8 +19,8 @@ spring:
       max-request-size: ${MAX_REQUEST_SIZE:10MB}
   data:
     mongodb:
-      username: ${MONGO_DB_USER:achraf}
-      password: ${MONGO_DB_PASSWORD:ladhari02}
+      username: ${MONGO_DB_USER}
+      password: ${MONGO_DB_PASSWORD}
       host: ${MONGO_HOST:localhost}
       port: 27017
       database: users
