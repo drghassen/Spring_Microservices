@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars locally if desired. This file contains no credentials.
+# The subscription ID is an Azure identifier, not an authentication secret.
+
+subscription_id     = "35b0da56-c3e1-44f6-9634-d20cec115304"
+resource_group_name = "internship_proxym"
+acr_name            = "ghassenspringservices"
+project_name        = "ghassen-dridi"
+environment         = "aca"
+
+# Optional additional tags. Foundation defaults are defined in locals.tf.
+tags = {}
