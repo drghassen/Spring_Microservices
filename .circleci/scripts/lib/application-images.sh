@@ -13,6 +13,10 @@ readonly EXPECTED_EUREKA_APPLICATIONS=(
 readonly GATEWAY_DISCOVERY_WAIT_ATTEMPTS="${GATEWAY_DISCOVERY_WAIT_ATTEMPTS:-24}"
 readonly GATEWAY_DISCOVERY_WAIT_INTERVAL_SECONDS="${GATEWAY_DISCOVERY_WAIT_INTERVAL_SECONDS:-5}"
 readonly GATEWAY_DISCOVERY_HEALTH_URL="${GATEWAY_DISCOVERY_HEALTH_URL:-http://localhost:8222/actuator/health}"
+# The only credentials used by a CI-created Compose stack and its DAST job.
+# They are intentionally non-sensitive fixtures, not deployment credentials.
+readonly CI_DAST_FIXTURE_USERNAME="admin"
+readonly CI_DAST_FIXTURE_PASSWORD="ci-compose-fixture-admin"
 
 configure_candidate_images() {
   : "${IMAGE_TAG:?IMAGE_TAG must be defined by CircleCI config as build-<< pipeline.number >>}"
@@ -69,17 +73,22 @@ configure_runtime_environment() {
     export JWT_SECRET
   fi
   export COMPOSE_PROJECT_NAME="ci${CIRCLE_BUILD_NUM}"
-  if [[ "${DAST_AUTH_USERNAME:-}" == "admin" && -n "${DAST_AUTH_PASSWORD+x}" && -z "${ADMIN_PASSWORD+x}" ]]; then
-    export ADMIN_PASSWORD="$DAST_AUTH_PASSWORD"
-  fi
+}
+
+use_ci_dast_fixture_credentials() {
+  # A fresh CI stack must never authenticate with values inherited from a
+  # CircleCI Context. Replace them before the ZAP container is started.
+  unset DAST_JWT_TOKEN DAST_AUTH_USERNAME DAST_AUTH_PASSWORD
+  export DAST_AUTH_USERNAME="$CI_DAST_FIXTURE_USERNAME"
+  export DAST_AUTH_PASSWORD="$CI_DAST_FIXTURE_PASSWORD"
 }
 
 create_ci_compose_env_file() {
   export CI_COMPOSE_ENV_FILE="$(mktemp)"
 
-  cat > "$CI_COMPOSE_ENV_FILE" <<'EOF'
+  cat > "$CI_COMPOSE_ENV_FILE" <<EOF
 # CI-only Compose fixtures; never use for runtime deployments.
-ADMIN_PASSWORD=ci-compose-fixture-admin
+ADMIN_PASSWORD=${CI_DAST_FIXTURE_PASSWORD}
 DB_PASSWORD=ci-compose-fixture-postgres-password
 DB_USERNAME=ci-compose-fixture-postgres-user
 JWT_SECRET=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=

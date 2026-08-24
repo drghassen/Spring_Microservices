@@ -1,0 +1,6 @@
+subscription_id            = "35b0da56-c3e1-44f6-9634-d20cec115304"
+resource_group_name        = "internship_proxym"
+state_storage_account_name = "stghassendridiaca5304"
+state_container_name       = "tfstate"
+
+tags = {}
