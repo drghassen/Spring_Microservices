@@ -218,7 +218,7 @@ public class UserService {
 
         libraryClient.createLibrary(
                 new LibraryRequest(userToSave.getId(), userToSave.getEmail(), userToSave.getUsername()),
-                token
+                "Bearer " + token
         );
 
         return new ResponseMapper(token);
