@@ -74,14 +74,66 @@ configure_runtime_environment() {
   fi
 }
 
+create_ci_compose_env_file() {
+  export CI_COMPOSE_ENV_FILE="$(mktemp)"
+
+  cat > "$CI_COMPOSE_ENV_FILE" <<'EOF'
+# CI-only Compose fixtures; never use for runtime deployments.
+ADMIN_PASSWORD=ci-compose-fixture-admin
+DB_PASSWORD=ci-compose-fixture-postgres-password
+DB_USERNAME=ci-compose-fixture-postgres-user
+JWT_SECRET=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
+ME_CONFIG_MONGODB_ADMINPASSWORD=ci-compose-fixture-mongo-password
+ME_CONFIG_MONGODB_ADMINUSERNAME=ci-compose-fixture-mongo-user
+MONGO_DB_PASSWORD=ci-compose-fixture-mongo-password
+MONGO_DB_USER=ci-compose-fixture-mongo-user
+MONGO_INITDB_ROOT_PASSWORD=ci-compose-fixture-mongo-password
+MONGO_INITDB_ROOT_USERNAME=ci-compose-fixture-mongo-user
+PGADMIN_DEFAULT_EMAIL=ci-compose-fixture@example.invalid
+PGADMIN_DEFAULT_PASSWORD=ci-compose-fixture-pgadmin-password
+POSTGRES_DB=steam
+POSTGRES_PASSWORD=ci-compose-fixture-postgres-password
+POSTGRES_USER=ci-compose-fixture-postgres-user
+SONAR_JDBC_PASSWORD=ci-compose-fixture-sonar-password
+SONAR_JDBC_USERNAME=ci-compose-fixture-sonar-user
+EOF
+
+  # Shell variables take precedence over --env-file values. Clear all
+  # Compose-injected runtime credentials so only the CI fixtures are used.
+  unset ADMIN_PASSWORD DB_PASSWORD DB_USERNAME JWT_SECRET \
+    ME_CONFIG_MONGODB_ADMINPASSWORD ME_CONFIG_MONGODB_ADMINUSERNAME \
+    MONGO_DB_PASSWORD MONGO_DB_USER MONGO_INITDB_ROOT_PASSWORD \
+    MONGO_INITDB_ROOT_USERNAME PGADMIN_DEFAULT_EMAIL PGADMIN_DEFAULT_PASSWORD \
+    POSTGRES_DB POSTGRES_PASSWORD POSTGRES_USER SONAR_JDBC_PASSWORD \
+    SONAR_JDBC_USERNAME
+}
+
+cleanup_ci_compose_env_file() {
+  if [[ -n "${CI_COMPOSE_ENV_FILE:-}" ]]; then
+    rm -f -- "$CI_COMPOSE_ENV_FILE"
+    unset CI_COMPOSE_ENV_FILE
+  fi
+}
+
+ci_compose() {
+  if [[ -n "${CI_COMPOSE_ENV_FILE:-}" ]]; then
+    COMPOSE_DISABLE_ENV_FILE=1 docker compose --env-file "$CI_COMPOSE_ENV_FILE" "$@"
+  else
+    # DAST can attach to an already-qualified stack and historically uses the
+    # caller's Compose environment. Integration and image-build scripts always
+    # initialize CI_COMPOSE_ENV_FILE before reaching this branch.
+    docker compose "$@"
+  fi
+}
+
 collect_compose_logs_and_cleanup() {
   local report_name="${COMPOSE_REPORT_NAME:-docker-compose}"
   local container_ids
 
   mkdir -p reports
-  docker compose ps --all > "reports/${report_name}.ps.log" 2>&1 || true
+  ci_compose ps --all > "reports/${report_name}.ps.log" 2>&1 || true
 
-  if container_ids="$(docker compose ps --all --quiet 2>/dev/null)"; then
+  if container_ids="$(ci_compose ps --all --quiet 2>/dev/null)"; then
     while IFS= read -r container_id; do
       [[ -n "$container_id" ]] || continue
       docker inspect --format '{{.Name}} status={{.State.Status}} exit_code={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
@@ -89,8 +141,9 @@ collect_compose_logs_and_cleanup() {
     done <<< "$container_ids" > "reports/${report_name}.health.log" 2>&1 || true
   fi
 
-  docker compose logs --no-color > "reports/${report_name}.log" || true
-  docker compose down --volumes --remove-orphans || true
+  ci_compose logs --no-color > "reports/${report_name}.log" || true
+  ci_compose down --volumes --remove-orphans || true
+  cleanup_ci_compose_env_file
 }
 
 eureka_registration_report() {
@@ -189,9 +242,9 @@ diagnose_smoke_failure() {
   echo "Curl exit ........ ${curl_exit}" >&2
   echo "HTTP status ...... ${actual_status}" >&2
   echo "Compose status ..." >&2
-  docker compose ps --all >&2 || true
+  ci_compose ps --all >&2 || true
   echo "Gateway/Eureka/service logs (last 120 lines) ..." >&2
-  docker compose logs --no-color --tail=120 \
+  ci_compose logs --no-color --tail=120 \
     gateway discovery-service games-service user-service library-service \
     order-service payment-service >&2 || true
   echo "--- End smoke failure diagnostics ---" >&2
@@ -268,8 +321,8 @@ wait_for_application_stack() {
   local eureka_apps
   local eureka_ready=0
 
-  docker compose config -q
-  docker compose up -d --no-build --wait --wait-timeout 300 \
+  ci_compose config -q
+  ci_compose up -d --no-build --wait --wait-timeout 300 \
     mongodb postgresql "${APP_SERVICES[@]}"
 
   for endpoint in \
