@@ -20,10 +20,7 @@ spring:
         corsConfigurations:
           '[/**]':
             allowedOrigins:
-              - ${CORS_ALLOWED_ORIGIN_LOCALHOST:http://localhost}
-              - ${CORS_ALLOWED_ORIGIN_LOCALHOST_4200:http://localhost:4200}
-              - ${CORS_ALLOWED_ORIGIN_LOOPBACK_4200:http://127.0.0.1:4200}
-              - ${CORS_ALLOWED_ORIGIN_APP:http://172.23.19.172}
+              - ${CORS_ALLOWED_ORIGINS:http://localhost,http://localhost:4200,http://127.0.0.1:4200}
             allowedMethods:
               - GET
               - POST
@@ -72,7 +69,7 @@ services:
 
 app:
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost,http://localhost:4200,http://127.0.0.1:4200,http://172.23.19.172}
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost,http://localhost:4200,http://127.0.0.1:4200}
 
 management:
   endpoints:
