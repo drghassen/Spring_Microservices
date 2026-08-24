@@ -304,11 +304,16 @@ prepare_zap_report_dir
 
 if [[ "${DAST_STACK_READY:-false}" != "true" ]]; then
   configure_runtime_environment
+  create_ci_compose_env_file
   export COMPOSE_REPORT_NAME="dast"
+  # collect_compose_logs_and_cleanup preserves the existing DAST stack
+  # cleanup and invokes cleanup_ci_compose_env_file on every EXIT path.
   trap collect_compose_logs_and_cleanup EXIT
   wait_for_application_stack
 else
   : "${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME must be set when DAST_STACK_READY=true}"
+  create_ci_compose_env_file
+  trap cleanup_ci_compose_env_file EXIT
 fi
 
 gate_high_risk_alerts() {
