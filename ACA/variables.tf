@@ -57,3 +57,32 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "vnet_address_space" {
+  description = "CIDR address space for the ACA virtual network."
+  type        = list(string)
+  default     = ["10.80.0.0/16"]
+}
+
+variable "aca_infrastructure_subnet_address_prefix" {
+  description = "CIDR prefix dedicated exclusively to Azure Container Apps infrastructure."
+  type        = string
+  default     = "10.80.0.0/23"
+}
+
+variable "private_endpoints_subnet_address_prefix" {
+  description = "CIDR prefix reserved for future PostgreSQL, Cosmos DB, and Key Vault private endpoints."
+  type        = string
+  default     = "10.80.2.0/24"
+}
+
+variable "log_analytics_retention_in_days" {
+  description = "Number of days to retain Log Analytics Workspace data."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.log_analytics_retention_in_days >= 30 && var.log_analytics_retention_in_days <= 730
+    error_message = "log_analytics_retention_in_days must be between 30 and 730 days."
+  }
+}
