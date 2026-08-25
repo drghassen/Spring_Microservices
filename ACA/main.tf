@@ -59,6 +59,25 @@ module "identities" {
   tags                = local.effective_tags
 }
 
+module "apps" {
+  source = "./modules/apps"
+
+  resource_group_name                      = data.azurerm_resource_group.current.name
+  container_app_environment_id             = module.foundation.container_app_environment_id
+  container_app_environment_default_domain = module.foundation.container_app_environment_default_domain
+  apps_managed_identity_id                 = module.identities.apps_managed_identity_id
+  acr_login_server                         = data.azurerm_container_registry.current.login_server
+  application_image_tag                    = var.application_image_tag
+  postgresql_server_fqdn                   = module.data.postgresql_server_fqdn
+  postgresql_database_name                 = module.data.postgresql_database_name
+  postgresql_application_username          = var.postgresql_application_username
+  postgresql_application_password          = var.postgresql_application_password
+  cosmos_mongodb_uri                       = var.cosmos_mongodb_uri
+  application_jwt_secret                   = var.application_jwt_secret
+  application_admin_password               = var.application_admin_password
+  tags                                     = local.effective_tags
+}
+
 # No image is selected at the foundation stage. Future Container Apps must
 # use immutable CircleCI-produced image tags; legacy build-31 images are not
 # valid deployment inputs.

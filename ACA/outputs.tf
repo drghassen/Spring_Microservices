@@ -122,3 +122,28 @@ output "apps_managed_identity_name" {
   description = "Name of the managed identity for future Azure Container Apps."
   value       = module.identities.apps_managed_identity_name
 }
+
+output "container_app_ids" {
+  description = "Non-sensitive map of Azure Container App resource IDs by application name."
+  value       = module.apps.container_app_ids
+}
+
+output "container_app_fqdns" {
+  description = "Non-sensitive map of Container App ingress FQDNs by application name."
+  value       = module.apps.container_app_fqdns
+}
+
+output "client_fqdn" {
+  description = "Ingress FQDN of the externally available client application."
+  value       = module.apps.client_fqdn
+}
+
+output "client_url" {
+  description = "HTTPS URL of the externally available client application."
+  value       = module.apps.client_url
+}
+
+output "gateway_fqdn" {
+  description = "Internal ingress FQDN of the gateway Container App."
+  value       = module.apps.gateway_fqdn
+}

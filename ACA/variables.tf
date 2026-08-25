@@ -104,6 +104,55 @@ variable "postgresql_administrator_password" {
   }
 }
 
+variable "application_image_tag" {
+  description = "Required shared immutable image tag for all Azure Container Apps."
+  type        = string
+
+  validation {
+    condition     = var.application_image_tag != "latest"
+    error_message = "application_image_tag must not be latest."
+  }
+
+  validation {
+    condition     = var.application_image_tag != "build-31"
+    error_message = "application_image_tag must not be build-31."
+  }
+
+  validation {
+    condition     = can(regex("^build-[0-9]+$", var.application_image_tag))
+    error_message = "application_image_tag must match build-<number>."
+  }
+}
+
+variable "postgresql_application_username" {
+  description = "Required PostgreSQL application username, distinct from the administrator account."
+  type        = string
+}
+
+variable "postgresql_application_password" {
+  description = "Required PostgreSQL application password."
+  type        = string
+  sensitive   = true
+}
+
+variable "cosmos_mongodb_uri" {
+  description = "Required Cosmos DB MongoDB connection URI."
+  type        = string
+  sensitive   = true
+}
+
+variable "application_jwt_secret" {
+  description = "Required JWT secret for Azure Container Apps."
+  type        = string
+  sensitive   = true
+}
+
+variable "application_admin_password" {
+  description = "Required application administrator password."
+  type        = string
+  sensitive   = true
+}
+
 variable "log_analytics_retention_in_days" {
   description = "Number of days to retain Log Analytics Workspace data."
   type        = number
