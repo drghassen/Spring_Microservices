@@ -85,7 +85,8 @@ resource "azurerm_cosmosdb_mongo_collection" "users" {
   database_name       = azurerm_cosmosdb_mongo_database.users.name
 
   index {
-    keys = ["_id"]
+    keys   = ["_id"]
+    unique = true
   }
 
   index {
@@ -107,7 +108,8 @@ resource "azurerm_cosmosdb_mongo_collection" "library" {
   database_name       = azurerm_cosmosdb_mongo_database.library.name
 
   index {
-    keys = ["_id"]
+    keys   = ["_id"]
+    unique = true
   }
 
   index {
