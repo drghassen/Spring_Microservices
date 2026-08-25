@@ -49,6 +49,16 @@ module "data" {
   postgresql_administrator_password = var.postgresql_administrator_password
 }
 
+module "identities" {
+  source = "./modules/identities"
+
+  resource_group_name = data.azurerm_resource_group.current.name
+  location            = data.azurerm_resource_group.current.location
+  name_prefix         = local.name_prefix
+  acr_id              = data.azurerm_container_registry.current.id
+  tags                = local.effective_tags
+}
+
 # No image is selected at the foundation stage. Future Container Apps must
 # use immutable CircleCI-produced image tags; legacy build-31 images are not
 # valid deployment inputs.
