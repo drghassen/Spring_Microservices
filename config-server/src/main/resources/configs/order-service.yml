@@ -19,6 +19,8 @@ spring:
       ddl-auto: update
     database: postgresql
     database-platform: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: false
 application:
   config:
     user-url: ${USER_URL:http://localhost:8222/api/v1/users}

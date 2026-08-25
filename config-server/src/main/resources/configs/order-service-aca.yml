@@ -18,8 +18,19 @@ application:
     payment-url: http://gateway/api/v1/payments
 
 spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: ${DB_URL}?sslmode=require
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
+    database: postgresql
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
   flyway:
-    enabled: false
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    clean-disabled: true
+    validate-migration-naming: true
