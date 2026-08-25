@@ -32,3 +32,8 @@ variable "private_endpoints_subnet_address_prefix" {
   description = "CIDR prefix reserved for future private endpoints."
   type        = string
 }
+
+variable "postgresql_subnet_address_prefix" {
+  description = "CIDR prefix dedicated exclusively to PostgreSQL Flexible Server."
+  type        = string
+}

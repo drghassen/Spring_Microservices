@@ -22,6 +22,7 @@ module "network" {
   vnet_address_space                       = var.vnet_address_space
   aca_infrastructure_subnet_address_prefix = var.aca_infrastructure_subnet_address_prefix
   private_endpoints_subnet_address_prefix  = var.private_endpoints_subnet_address_prefix
+  postgresql_subnet_address_prefix         = var.postgresql_subnet_address_prefix
 }
 
 module "foundation" {
@@ -33,6 +34,19 @@ module "foundation" {
   tags                            = local.effective_tags
   aca_infrastructure_subnet_id    = module.network.aca_infrastructure_subnet_id
   log_analytics_retention_in_days = var.log_analytics_retention_in_days
+}
+
+module "data" {
+  source = "./modules/data"
+
+  resource_group_name               = data.azurerm_resource_group.current.name
+  location                          = data.azurerm_resource_group.current.location
+  name_prefix                       = local.name_prefix
+  tags                              = local.effective_tags
+  virtual_network_id                = module.network.vnet_id
+  postgresql_delegated_subnet_id    = module.network.postgresql_subnet_id
+  postgresql_administrator_login    = var.postgresql_administrator_login
+  postgresql_administrator_password = var.postgresql_administrator_password
 }
 
 # No image is selected at the foundation stage. Future Container Apps must

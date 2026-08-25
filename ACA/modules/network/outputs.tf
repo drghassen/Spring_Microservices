@@ -17,3 +17,8 @@ output "private_endpoints_subnet_id" {
   description = "ID of the subnet reserved for future private endpoints."
   value       = azurerm_subnet.private_endpoints.id
 }
+
+output "postgresql_subnet_id" {
+  description = "ID of the subnet delegated to PostgreSQL Flexible Server."
+  value       = azurerm_subnet.postgresql.id
+}

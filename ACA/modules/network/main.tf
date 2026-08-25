@@ -30,3 +30,21 @@ resource "azurerm_subnet" "private_endpoints" {
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = [var.private_endpoints_subnet_address_prefix]
 }
+
+resource "azurerm_subnet" "postgresql" {
+  name                 = "snet-postgresql"
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.this.name
+  address_prefixes     = [var.postgresql_subnet_address_prefix]
+
+  delegation {
+    name = "postgresql-flexible-server-delegation"
+
+    service_delegation {
+      name = "Microsoft.DBforPostgreSQL/flexibleServers"
+      actions = [
+        "Microsoft.Network/virtualNetworks/subnets/join/action",
+      ]
+    }
+  }
+}

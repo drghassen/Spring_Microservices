@@ -82,3 +82,23 @@ output "container_app_environment_default_domain" {
   description = "Default domain assigned to the Azure Container Apps environment."
   value       = module.foundation.container_app_environment_default_domain
 }
+
+output "postgresql_server_id" {
+  description = "Resource ID of the PostgreSQL Flexible Server."
+  value       = module.data.postgresql_server_id
+}
+
+output "postgresql_server_fqdn" {
+  description = "Private DNS hostname used by future ACA workloads to reach PostgreSQL."
+  value       = module.data.postgresql_server_fqdn
+}
+
+output "postgresql_database_name" {
+  description = "Shared PostgreSQL database required by Games, Order, and Payment."
+  value       = module.data.postgresql_database_name
+}
+
+output "cosmos_mongodb_account_id" {
+  description = "Resource ID of the Azure Cosmos DB API for MongoDB account."
+  value       = module.data.cosmos_mongodb_account_id
+}

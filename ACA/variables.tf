@@ -76,6 +76,34 @@ variable "private_endpoints_subnet_address_prefix" {
   default     = "10.80.2.0/24"
 }
 
+variable "postgresql_subnet_address_prefix" {
+  description = "CIDR prefix dedicated exclusively to Azure Database for PostgreSQL Flexible Server."
+  type        = string
+  default     = "10.80.3.0/28"
+}
+
+variable "postgresql_administrator_login" {
+  description = "Administrator login for the PostgreSQL Flexible Server. Supply it through TF_VAR_postgresql_administrator_login or an ignored local tfvars file."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9]{1,63}$", var.postgresql_administrator_login)) && !startswith(lower(var.postgresql_administrator_login), "pg_")
+    error_message = "postgresql_administrator_login must contain 1-63 letters or digits and must not begin with pg_."
+  }
+}
+
+variable "postgresql_administrator_password" {
+  description = "Administrator password for the PostgreSQL Flexible Server. Supply it only through TF_VAR_postgresql_administrator_password or an ignored local tfvars file."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.postgresql_administrator_password) >= 8 && length(var.postgresql_administrator_password) <= 128
+    error_message = "postgresql_administrator_password must contain 8-128 characters."
+  }
+}
+
 variable "log_analytics_retention_in_days" {
   description = "Number of days to retain Log Analytics Workspace data."
   type        = number
