@@ -1,6 +1,9 @@
 version: 2.1
 
 parameters:
+  run_oidc_claims_audit:
+    type: boolean
+    default: false
   run_application_ci:
     type: boolean
     default: false
