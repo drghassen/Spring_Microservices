@@ -3,17 +3,26 @@ FROM maven:3.9-eclipse-temurin-17-alpine@sha256:097d7c4ac16bef6c3a8bdc53cf5abe82
 WORKDIR /workspace
 
 COPY pom.xml ./
+COPY database-migrations/pom.xml database-migrations/pom.xml
+COPY config-server/pom.xml config-server/pom.xml
+COPY discovery-service/pom.xml discovery-service/pom.xml
+COPY gateway/pom.xml gateway/pom.xml
 COPY games-service/pom.xml games-service/pom.xml
+COPY library-service/pom.xml library-service/pom.xml
+COPY order-service/pom.xml order-service/pom.xml
+COPY payment-service/pom.xml payment-service/pom.xml
+COPY user-service/pom.xml user-service/pom.xml
 
-RUN mvn -B -ntp -f games-service/pom.xml -DskipTests dependency:go-offline
+RUN mvn -B -ntp -pl database-migrations,games-service -am -DskipTests dependency:go-offline
 
 FROM deps AS builder
 
 WORKDIR /workspace
 
+COPY database-migrations/src database-migrations/src
 COPY games-service/src games-service/src
 
-RUN mvn -B -ntp -f games-service/pom.xml -DskipTests clean package
+RUN mvn -B -ntp -pl games-service -am -DskipTests clean package
 RUN java -Djarmode=tools \
     -jar games-service/target/*.jar \
     extract --layers --launcher \
