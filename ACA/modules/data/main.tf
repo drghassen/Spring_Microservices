@@ -17,6 +17,7 @@ resource "azurerm_postgresql_flexible_server" "this" {
   name                = "${var.name_prefix}-postgresql"
   resource_group_name = var.resource_group_name
   location            = var.location
+  zone                = "1"
 
   version                       = "16"
   delegated_subnet_id           = var.postgresql_delegated_subnet_id
@@ -84,6 +85,10 @@ resource "azurerm_cosmosdb_mongo_collection" "users" {
   database_name       = azurerm_cosmosdb_mongo_database.users.name
 
   index {
+    keys = ["_id"]
+  }
+
+  index {
     keys   = ["username"]
     unique = true
   }
@@ -100,6 +105,10 @@ resource "azurerm_cosmosdb_mongo_collection" "library" {
   resource_group_name = var.resource_group_name
   account_name        = azurerm_cosmosdb_account.mongodb.name
   database_name       = azurerm_cosmosdb_mongo_database.library.name
+
+  index {
+    keys = ["_id"]
+  }
 
   index {
     keys   = ["username"]
