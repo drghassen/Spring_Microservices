@@ -362,6 +362,33 @@ jobs:
           path: reports
           destination: dast-scan
 
+  qualify-database-migrations-image:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: true
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - configure-candidate-image-tag
+      - run:
+          name: Build, scan, SBOM, and export the PostgreSQL bootstrap image
+          command: bash .circleci/scripts/qualify-database-migrations-image.sh
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ci-database-migrations
+      - persist_to_workspace:
+          root: reports
+          paths:
+            - sbom-reports/database-migrations
+      - store_artifacts:
+          path: reports/trivy-images/database-migrations.json
+          destination: database-migrations/trivy.json
+      - store_artifacts:
+          path: reports/sbom-reports/database-migrations
+          destination: database-migrations/sbom
+
   release-acr:
     machine:
       image: ubuntu-2404:current
@@ -373,7 +400,10 @@ jobs:
           at: .
       - load-candidate-images
       - run:
-          name: Publish the approved immutable images to Azure Container Registry
+          name: Load the qualified PostgreSQL bootstrap image
+          command: bash .circleci/scripts/load-database-migrations-image.sh
+      - run:
+          name: Publish the approved runtime and PostgreSQL bootstrap images to Azure Container Registry
           command: bash .circleci/scripts/publish-application-images.sh
       - store_artifacts:
           path: reports
@@ -439,6 +469,17 @@ workflows:
             - dependency-scan
             - backend-sonar
             - frontend-sonar
+      # Master-only migration qualification starts after the code gates and
+      # runs independently from the runtime image and DAST path.
+      - qualify-database-migrations-image:
+          requires:
+            - source-security-scan
+            - dependency-scan
+            - backend-sonar
+            - frontend-sonar
+          filters:
+            branches:
+              only: master
       # Stage 4: Trivy scans the exact images from both image-build jobs.
       - image-trivy-scan:
           context:
@@ -470,6 +511,7 @@ workflows:
             - acr-publish
           requires:
             - dast-scan
+            - qualify-database-migrations-image
           filters:
             branches:
               only: master
