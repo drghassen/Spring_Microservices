@@ -178,7 +178,7 @@ class UserServiceTests {
                 argThat(requestBody -> requestBody.id().equals("id-1")
                         && requestBody.email().equals("jane@example.com")
                         && requestBody.username().equals("jane")),
-                eq("jwt-token")
+                eq("Bearer jwt-token")
         );
     }
 

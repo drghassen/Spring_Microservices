@@ -9,7 +9,7 @@ services:
     ports:
       - 8888:8888
     environment:
-      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env or the shell before starting Docker Compose}"
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env}"
     networks:
       - microservices
 
@@ -43,7 +43,7 @@ services:
       EUREKA_HOSTNAME_GATEWAY: gateway
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
-      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env or the shell before starting Docker Compose}"
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env}"
     networks:
       - microservices
     depends_on:
@@ -58,8 +58,8 @@ services:
     container_name: games-service
     environment:
       DB_URL: jdbc:postgresql://ms_pg_sql:5432/steam
-      DB_USERNAME: postgres
-      DB_PASSWORD: postgres
+      DB_USERNAME: "${DB_USERNAME:?Set DB_USERNAME in .env}"
+      DB_PASSWORD: "${DB_PASSWORD:?Set DB_PASSWORD in .env}"
       EUREKA_HOSTNAME_GAMES: games-service
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
@@ -83,6 +83,8 @@ services:
     environment:
       EUREKA_HOSTNAME_LIBRARY: library-service
       MONGO_HOST: mongo_db
+      MONGO_DB_USER: "${MONGO_DB_USER:?Set MONGO_DB_USER in .env}"
+      MONGO_DB_PASSWORD: "${MONGO_DB_PASSWORD:?Set MONGO_DB_PASSWORD in .env}"
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
     networks:
@@ -105,8 +107,8 @@ services:
       GAMES_URL: http://gateway:8222/api/v1/games
       PAYMENT_URL: http://gateway:8222/api/v1/payments
       DB_URL: jdbc:postgresql://ms_pg_sql:5432/steam
-      DB_USERNAME: postgres
-      DB_PASSWORD: postgres
+      DB_USERNAME: "${DB_USERNAME:?Set DB_USERNAME in .env}"
+      DB_PASSWORD: "${DB_PASSWORD:?Set DB_PASSWORD in .env}"
       EUREKA_HOSTNAME_ORDER: order-service
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
@@ -126,8 +128,8 @@ services:
     container_name: payment-service
     environment:
       DB_URL: jdbc:postgresql://ms_pg_sql:5432/steam
-      DB_USERNAME: postgres
-      DB_PASSWORD: postgres
+      DB_USERNAME: "${DB_USERNAME:?Set DB_USERNAME in .env}"
+      DB_PASSWORD: "${DB_PASSWORD:?Set DB_PASSWORD in .env}"
       EUREKA_HOSTNAME_PAYMENT: payment-service
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
@@ -149,11 +151,13 @@ services:
       LIBRARY_URL: http://gateway:8222/api/v1/library
       EUREKA_HOSTNAME_USER: user-service
       MONGO_HOST: mongo_db
+      MONGO_DB_USER: "${MONGO_DB_USER:?Set MONGO_DB_USER in .env}"
+      MONGO_DB_PASSWORD: "${MONGO_DB_PASSWORD:?Set MONGO_DB_PASSWORD in .env}"
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
       UPLOADS_USER_DIR: /app/uploads/user
-      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env or the shell before starting Docker Compose}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}"
     volumes:
       - user-uploads:/app/uploads/user
     networks:
@@ -185,8 +189,8 @@ services:
         condition: service_healthy
     environment:
       SONAR_JDBC_URL: jdbc:postgresql://ms_pg_sql:5432/sonar
-      SONAR_JDBC_USERNAME: postgres
-      SONAR_JDBC_PASSWORD: postgres
+      SONAR_JDBC_USERNAME: "${SONAR_JDBC_USERNAME:?Set SONAR_JDBC_USERNAME in .env}"
+      SONAR_JDBC_PASSWORD: "${SONAR_JDBC_PASSWORD:?Set SONAR_JDBC_PASSWORD in .env}"
     ports:
       - "9000:9000"
     volumes:
@@ -209,8 +213,8 @@ services:
     volumes:
       - mongo:/data
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=achraf
-      - MONGO_INITDB_ROOT_PASSWORD=ladhari02
+      - "MONGO_INITDB_ROOT_USERNAME=${MONGO_INITDB_ROOT_USERNAME:?Set MONGO_INITDB_ROOT_USERNAME in .env}"
+      - "MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD:?Set MONGO_INITDB_ROOT_PASSWORD in .env}"
     networks:
       - microservices
 
@@ -223,8 +227,8 @@ services:
     ports:
       - 8081:8081
     environment:
-      - ME_CONFIG_MONGODB_ADMINUSERNAME=achraf
-      - ME_CONFIG_MONGODB_ADMINPASSWORD=ladhari02
+      - "ME_CONFIG_MONGODB_ADMINUSERNAME=${ME_CONFIG_MONGODB_ADMINUSERNAME:?Set ME_CONFIG_MONGODB_ADMINUSERNAME in .env}"
+      - "ME_CONFIG_MONGODB_ADMINPASSWORD=${ME_CONFIG_MONGODB_ADMINPASSWORD:?Set ME_CONFIG_MONGODB_ADMINPASSWORD in .env}"
       - ME_CONFIG_MONGODB_SERVER=mongodb
     networks:
       - microservices
@@ -233,19 +237,18 @@ services:
     container_name: ms_pg_sql
     image: postgres
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: steam
-      PGDATA: /data/postgres
+      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?Set POSTGRES_USER in .env}"]
       interval: 5s
       timeout: 5s
       retries: 10
     volumes:
       - postgres:/data/postgres
     ports:
-      - "5433:5432"
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     networks:
       - microservices
     restart: unless-stopped
@@ -254,8 +257,8 @@ services:
     container_name: ms_pgadmin
     image: dpage/pgadmin4
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin4@pgadmin.org}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_DEFAULT_EMAIL: "${PGADMIN_DEFAULT_EMAIL:?Set PGADMIN_DEFAULT_EMAIL in .env}"
+      PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_DEFAULT_PASSWORD:?Set PGADMIN_DEFAULT_PASSWORD in .env}"
       PGADMIN_CONFIG_SERVER_MODE: 'False'
     volumes:
       - pgadmin:/var/lib/pgadmin

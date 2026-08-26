@@ -1,0 +1,7 @@
+resource_group_name  = "internship_proxym"
+storage_account_name = "stghassendridiaca5304"
+container_name       = "tfstate"
+key                  = "aca/terraform.tfstate"
+
+use_azuread_auth = true
+use_cli           = true

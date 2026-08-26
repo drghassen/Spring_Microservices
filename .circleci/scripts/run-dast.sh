@@ -84,6 +84,19 @@ record_security_high() {
   SECURITY_FINDINGS_HIGH+=("${target_name}: high_count=${high_count}")
 }
 
+record_dast_auth_failure() {
+  local step="$1"
+  local http_status="${2:-}"
+  local summary_file="${ZAP_REPORT_DIR}/scan-summary.txt"
+
+  mkdir -p "$ZAP_REPORT_DIR"
+  if [[ "$http_status" =~ ^[1-5][0-9][0-9]$ ]]; then
+    printf 'DAST authentication failed: step=%s http_status=%s\n' "$step" "$http_status" >> "$summary_file"
+  else
+    printf 'DAST authentication failed: step=%s\n' "$step" >> "$summary_file"
+  fi
+}
+
 require_url_with_scheme() {
   local label="$1"
   local url="$2"
@@ -125,11 +138,13 @@ configure_dast_jwt_token() {
         | curl -fsS -H 'Content-Type: application/json' --data-binary @- '${AUTH_LOGIN_URL}' \
         | jq -er '.message | select(type == \"string\" and length > 0)'
     ")" || {
+      record_dast_auth_failure "jwt-login"
       record_scan_error "auth" "DAST authentication: failed to obtain JWT from ${AUTH_LOGIN_URL}"
       return 1
     }
 
     [[ -n "$token" ]] || {
+      record_dast_auth_failure "jwt-login-response"
       record_scan_error "auth" "DAST authentication: login response did not contain a JWT"
       return 1
     }
@@ -140,7 +155,8 @@ configure_dast_jwt_token() {
     return 0
   fi
 
-  record_scan_error "auth" "DAST authentication requires DAST_JWT_TOKEN or DAST_AUTH_USERNAME/DAST_AUTH_PASSWORD CircleCI secrets"
+  record_dast_auth_failure "credential-selection"
+  record_scan_error "auth" "DAST authentication requires an explicit JWT or username/password credentials"
   return 1
 }
 
@@ -173,11 +189,13 @@ validate_dast_jwt_token() {
   local now
 
   if [[ ! "$token" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+    record_dast_auth_failure "jwt-format"
     record_scan_error "auth" "DAST authentication: supplied token is not a compact JWT"
     return 1
   fi
 
   claims_json="$(jwt_payload_json "$token")" || {
+    record_dast_auth_failure "jwt-payload"
     record_scan_error "auth" "DAST authentication: JWT payload is not valid JSON"
     return 1
   }
@@ -189,6 +207,7 @@ validate_dast_jwt_token() {
     and (.exp | type == "number" and . > ($now + 60))
     and (.roles | type == "array" and length > 0)
   ' <<< "$claims_json" >/dev/null || {
+    record_dast_auth_failure "jwt-claims"
     record_scan_error "auth" "DAST authentication: JWT is missing required claims or expires too soon"
     return 1
   }
@@ -203,11 +222,13 @@ validate_dast_jwt_token() {
       -H \"Authorization: Bearer \${DAST_JWT_TOKEN}\" \
       '${validation_url}'
   ")" || {
+    record_dast_auth_failure "gateway-token-validation"
     record_scan_error "auth" "DAST authentication: failed to validate JWT against Gateway"
     return 1
   }
 
   if [[ "$status" != "200" ]]; then
+    record_dast_auth_failure "gateway-token-validation" "$status"
     record_scan_error "auth" "DAST authentication: Gateway rejected JWT validation request with HTTP ${status}"
     return 1
   fi
@@ -304,11 +325,17 @@ prepare_zap_report_dir
 
 if [[ "${DAST_STACK_READY:-false}" != "true" ]]; then
   configure_runtime_environment
+  create_ci_compose_env_file
+  use_ci_dast_fixture_credentials
   export COMPOSE_REPORT_NAME="dast"
+  # collect_compose_logs_and_cleanup preserves the existing DAST stack
+  # cleanup and invokes cleanup_ci_compose_env_file on every EXIT path.
   trap collect_compose_logs_and_cleanup EXIT
   wait_for_application_stack
 else
   : "${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME must be set when DAST_STACK_READY=true}"
+  create_ci_compose_env_file
+  trap cleanup_ci_compose_env_file EXIT
 fi
 
 gate_high_risk_alerts() {

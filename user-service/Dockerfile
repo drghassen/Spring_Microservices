@@ -19,13 +19,15 @@ RUN java -Djarmode=tools \
     extract --layers --launcher \
     --destination /workspace/extracted
 
-FROM eclipse-temurin:17-jre-alpine@sha256:02320dd4ce20e243dfb915c686089cf9315c763084fafbb12d5c9993aee18b57 AS runtime
+FROM eclipse-temurin:17.0.20_8-jre-noble@sha256:5726444f65e67c407bac4ff1e036b475051f50bb3840273e81814e77c6fa8ee3 AS runtime
 
-RUN apk upgrade --no-cache && \
-    apk add --no-cache tini wget
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y tini wget && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN addgroup -g 1000 -S spring && \
-    adduser -u 1000 -S spring -G spring -h /app -s /sbin/nologin
+RUN userdel ubuntu && \
+    groupadd --gid 1000 spring && \
+    useradd --uid 1000 --gid 1000 --no-create-home --home-dir /app --shell /usr/sbin/nologin spring
 
 WORKDIR /app
 
@@ -46,4 +48,4 @@ ENV JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+E
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
     CMD wget -qO- http://localhost:8090/actuator/health | grep -q '"status":"UP"' || exit 1
 
-ENTRYPOINT ["/sbin/tini", "--", "java", "org.springframework.boot.loader.launch.JarLauncher"]
+ENTRYPOINT ["/usr/bin/tini", "--", "java", "org.springframework.boot.loader.launch.JarLauncher"]

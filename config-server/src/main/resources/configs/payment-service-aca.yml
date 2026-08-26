@@ -1,0 +1,33 @@
+eureka:
+  instance:
+    hostname: ${EUREKA_HOSTNAME_PAYMENT:payment-service}
+    prefer-ip-address: false
+    instance-id: ${spring.application.name}:${HOSTNAME:${random.uuid}}
+    non-secure-port: 80
+    non-secure-port-enabled: true
+    secure-port-enabled: false
+  client:
+    service-url:
+      defaultZone: ${EUREKA_DEFAULT_ZONE:http://discovery-service/eureka}
+
+application:
+  config:
+    games-url: http://gateway/api/v1/games
+
+spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: ${DB_URL}?sslmode=require
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    database: postgresql
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    clean-disabled: true
+    validate-migration-naming: true

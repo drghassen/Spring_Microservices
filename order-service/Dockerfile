@@ -3,29 +3,40 @@ FROM maven:3.9-eclipse-temurin-17-alpine@sha256:097d7c4ac16bef6c3a8bdc53cf5abe82
 WORKDIR /workspace
 
 COPY pom.xml ./
+COPY database-migrations/pom.xml database-migrations/pom.xml
+COPY config-server/pom.xml config-server/pom.xml
+COPY discovery-service/pom.xml discovery-service/pom.xml
+COPY gateway/pom.xml gateway/pom.xml
+COPY games-service/pom.xml games-service/pom.xml
+COPY library-service/pom.xml library-service/pom.xml
 COPY order-service/pom.xml order-service/pom.xml
+COPY payment-service/pom.xml payment-service/pom.xml
+COPY user-service/pom.xml user-service/pom.xml
 
-RUN mvn -B -ntp -f order-service/pom.xml -DskipTests dependency:go-offline
+RUN mvn -B -ntp -pl database-migrations,order-service -am -DskipTests dependency:go-offline
 
 FROM deps AS builder
 
 WORKDIR /workspace
 
+COPY database-migrations/src database-migrations/src
 COPY order-service/src order-service/src
 
-RUN mvn -B -ntp -f order-service/pom.xml -DskipTests clean package
+RUN mvn -B -ntp -pl order-service -am -DskipTests clean package
 RUN java -Djarmode=tools \
     -jar order-service/target/*.jar \
     extract --layers --launcher \
     --destination /workspace/extracted
 
-FROM eclipse-temurin:17-jre-alpine@sha256:02320dd4ce20e243dfb915c686089cf9315c763084fafbb12d5c9993aee18b57 AS runtime
+FROM eclipse-temurin:17.0.20_8-jre-noble@sha256:5726444f65e67c407bac4ff1e036b475051f50bb3840273e81814e77c6fa8ee3 AS runtime
 
-RUN apk upgrade --no-cache && \
-    apk add --no-cache tini wget
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y tini wget && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN addgroup -g 1000 -S spring && \
-    adduser -u 1000 -S spring -G spring -h /app -s /sbin/nologin
+RUN userdel ubuntu && \
+    groupadd --gid 1000 spring && \
+    useradd --uid 1000 --gid 1000 --no-create-home --home-dir /app --shell /usr/sbin/nologin spring
 
 WORKDIR /app
 
@@ -43,4 +54,4 @@ ENV JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+E
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
     CMD wget -qO- http://localhost:8060/actuator/health | grep -q '"status":"UP"' || exit 1
 
-ENTRYPOINT ["/sbin/tini", "--", "java", "org.springframework.boot.loader.launch.JarLauncher"]
+ENTRYPOINT ["/usr/bin/tini", "--", "java", "org.springframework.boot.loader.launch.JarLauncher"]

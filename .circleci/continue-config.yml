@@ -1,0 +1,522 @@
+version: 2.1
+
+parameters:
+  run_oidc_claims_audit:
+    type: boolean
+    default: false
+  run_application_ci:
+    type: boolean
+    default: false
+  run_infrastructure_ci:
+    type: boolean
+    default: false
+
+orbs:
+  browser-tools: circleci/browser-tools@1.4.8
+
+commands:
+  configure-candidate-image-tag:
+    description: Export the pipeline-scoped Docker tag used by every candidate image job.
+    steps:
+      - run:
+          name: Configure candidate image tag
+          command: echo 'export IMAGE_TAG=build-<< pipeline.number >>' >> "$BASH_ENV"
+
+  trust-github-ssh-host:
+    description: Install GitHub's published ED25519 host key for Sonar SCM analysis.
+    steps:
+      - run:
+          name: Trust GitHub SSH host key for SCM analysis
+          command: |
+            install -d -m 700 ~/.ssh
+            grep -qxF 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' ~/.ssh/known_hosts 2>/dev/null || \
+              echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >> ~/.ssh/known_hosts
+            chmod 600 ~/.ssh/known_hosts
+
+  load-candidate-images:
+    description: Load the frontend and backend image archives produced by the parallel build jobs.
+    steps:
+      - run:
+          name: Configure candidate image tag
+          command: echo 'export IMAGE_TAG=build-<< pipeline.number >>' >> "$BASH_ENV"
+      - run:
+          name: Load the immutable candidate images
+          command: bash .circleci/scripts/load-application-images.sh
+
+  send-security-alert-on-failure:
+    description: Email a concise scanner report without masking the gate failure.
+    parameters:
+      scanner:
+        type: string
+      reports:
+        type: string
+    steps:
+      - run:
+          name: Send Azure Communication Services security alert
+          when: on_fail
+          command: |
+            bash .circleci/scripts/send-security-alert.sh \
+              --scanner '<< parameters.scanner >>' \
+              --reports '<< parameters.reports >>'
+
+jobs:
+  backend-build-test:
+    machine: true
+    resource_class: drghassen/sonar-vm
+    working_directory: ~/project
+    steps:
+      - checkout:
+          method: full
+      - run:
+          name: Calculate Maven cache key from every project POM
+          command: |
+            find . -maxdepth 2 -name pom.xml -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum > .circleci/maven-poms.sha256
+            test -s .circleci/maven-poms.sha256
+      - restore_cache:
+          keys:
+            - v1-maven-{{ checksum ".circleci/maven-poms.sha256" }}
+            - v1-maven-
+      - run:
+          name: Compile and test backend services
+          command: bash .circleci/scripts/backend-build.sh
+      # Maven cache saving is disabled because it consistently fails on this runner.
+      # dependency-scan receives the resolved Maven POMs through the workflow workspace.
+      # - save_cache:
+      #     key: v1-maven-{{ checksum ".circleci/maven-poms.sha256" }}
+      #     paths:
+      #       - ~/.m2/repository
+      - run:
+          name: Stage resolved Maven POMs for dependency scanning
+          command: |
+            maven_pom_stage="$PWD/ci-maven-repository"
+            mkdir -p "$maven_pom_stage"
+            (
+              cd ~/.m2/repository
+              find . -type f -name '*.pom' -print0 \
+                | tar --null -T - -cf -
+            ) | tar -xf - -C "$maven_pom_stage"
+            test -n "$(find "$maven_pom_stage" -type f -name '*.pom' -print -quit)"
+      - run:
+          name: Prepare minimal backend artifacts for SonarQube
+          command: bash .circleci/scripts/prepare-backend-sonar-artifacts.sh stage
+      - run:
+          name: Collect JUnit test reports
+          when: always
+          command: |
+            mkdir -p ~/test-results/junit
+            find . -type f -path '*/target/surefire-reports/*.xml' \
+              -exec cp {} ~/test-results/junit/ \;
+      - store_test_results:
+          path: ~/test-results
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ci-backend-sonar
+            - ci-maven-repository
+
+  frontend-build-test:
+    docker:
+      - image: cimg/node:22.23.1-browsers
+    environment:
+      CHROME_BIN: /usr/bin/google-chrome
+    working_directory: ~/project
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-npm-{{ checksum "UI_Spring/package-lock.json" }}
+            - v1-npm-
+      - browser-tools/install-chrome
+      - run:
+          name: Verify Google Chrome is available
+          command: google-chrome --version
+      - run:
+          name: Test and build Angular frontend
+          command: bash .circleci/scripts/frontend-quality.sh
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ci-frontend-sonar
+      - save_cache:
+          key: v1-npm-{{ checksum "UI_Spring/package-lock.json" }}
+          paths:
+            - ~/.npm
+
+  source-security-scan:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run:
+          name: Scan source secrets and Dockerfiles with Trivy
+          command: bash .circleci/scripts/scan-filesystem.sh
+      - send-security-alert-on-failure:
+          scanner: Trivy source and secret scan
+          reports: reports/trivy-filesystem.json
+      - store_artifacts:
+          path: reports/trivy-filesystem.json
+          destination: trivy/trivy-filesystem.json
+
+  dependency-scan:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run:
+          name: Scan application dependencies with Trivy
+          command: |
+            MAVEN_REPOSITORY="$PWD/ci-maven-repository" \
+              bash .circleci/scripts/scan-dependencies.sh
+      - send-security-alert-on-failure:
+          scanner: Trivy dependency scan
+          reports: reports/trivy-dependencies.json
+      - store_artifacts:
+          path: reports/trivy-dependencies.json
+          destination: trivy/trivy-dependencies.json
+
+  backend-sonar:
+    machine: true
+    resource_class: drghassen/sonar-vm
+    working_directory: ~/project
+    steps:
+      - checkout:
+          method: full
+      - trust-github-ssh-host
+      - attach_workspace:
+          at: .
+      - run:
+          name: Restore compiled classes and JaCoCo reports for SonarQube
+          command: bash .circleci/scripts/prepare-backend-sonar-artifacts.sh restore
+      - run:
+          name: Analyse backend with SonarQube and wait for its quality gate
+          command: |
+            mkdir -p reports/sonarqube
+            set -o pipefail
+            bash .circleci/scripts/backend-sonar.sh 2>&1 | tee reports/sonarqube/backend-sonar.log
+      - send-security-alert-on-failure:
+          scanner: SonarQube backend quality gate
+          reports: reports/sonarqube/backend-sonar.log
+      - store_artifacts:
+          path: reports/sonarqube
+          destination: sonar-backend
+
+  frontend-sonar:
+    machine: true
+    resource_class: drghassen/sonar-vm
+    working_directory: ~/project
+    steps:
+      - checkout:
+          method: full
+      - trust-github-ssh-host
+      - attach_workspace:
+          at: .
+      - run:
+          name: Analyse frontend with SonarQube and wait for its quality gate
+          command: |
+            mkdir -p reports/sonarqube
+            set -o pipefail
+            bash .circleci/scripts/frontend-sonar.sh 2>&1 | tee reports/sonarqube/frontend-sonar.log
+      - send-security-alert-on-failure:
+          scanner: SonarQube frontend quality gate
+          reports: reports/sonarqube/frontend-sonar.log
+      - store_artifacts:
+          path: reports/sonarqube
+          destination: sonar-frontend
+
+  frontend-image-build:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: true
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - configure-candidate-image-tag
+      - run:
+          name: Build the immutable frontend image
+          command: bash .circleci/scripts/build-application-images.sh client
+      - run:
+          name: Export the frontend image for downstream security gates
+          command: bash .circleci/scripts/export-application-images.sh frontend client
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ci-image-archives/frontend
+
+  backend-image-build:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: true
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - configure-candidate-image-tag
+      - run:
+          name: Build the immutable backend images
+          command: |
+            bash .circleci/scripts/build-application-images.sh \
+              config-server discovery-service gateway games-service library-service \
+              order-service payment-service user-service
+      - run:
+          name: Export the backend images for downstream security gates
+          command: |
+            bash .circleci/scripts/export-application-images.sh backend \
+              config-server discovery-service gateway games-service library-service \
+              order-service payment-service user-service
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ci-image-archives/backend
+
+  image-trivy-scan:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Scan every candidate image with Trivy
+          command: bash .circleci/scripts/scan-application-images.sh
+      - send-security-alert-on-failure:
+          scanner: Trivy container image scan
+          reports: reports/trivy-images
+      - store_artifacts:
+          path: reports
+          destination: image-trivy-scan
+
+  dependency-track-sbom-publish:
+    machine: true
+    resource_class: drghassen/sonar-vm
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Generate CycloneDX 1.6 SBOMs and publish to Dependency-Track
+          command: bash .circleci/scripts/publish-sboms-dependency-track.sh
+      - send-security-alert-on-failure:
+          scanner: Dependency-Track SBOM publication
+          reports: reports/dependency-track
+      - persist_to_workspace:
+          root: reports
+          paths:
+            - sbom-reports
+      - store_artifacts:
+          path: reports/sbom-reports
+          destination: sbom-reports
+      - store_artifacts:
+          path: reports/dependency-track
+          destination: dependency-track
+
+  container-integration:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Start containers and validate health checks plus Eureka registrations
+          command: bash .circleci/scripts/run-container-integration.sh
+      - store_artifacts:
+          when: always
+          path: reports
+          destination: container-integration
+
+  dast-scan:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Start a clean qualified stack and run OWASP ZAP DAST
+          command: bash .circleci/scripts/run-dast.sh
+      - send-security-alert-on-failure:
+          scanner: OWASP ZAP DAST scan
+          reports: reports/zap
+      - store_artifacts:
+          when: always
+          path: reports
+          destination: dast-scan
+
+  qualify-database-migrations-image:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: true
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - configure-candidate-image-tag
+      - run:
+          name: Build, scan, SBOM, and export the PostgreSQL bootstrap image
+          command: bash .circleci/scripts/qualify-database-migrations-image.sh
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ci-database-migrations
+      - persist_to_workspace:
+          root: reports
+          paths:
+            - sbom-reports/database-migrations
+      - store_artifacts:
+          path: reports/trivy-images/database-migrations.json
+          destination: database-migrations/trivy.json
+      - store_artifacts:
+          path: reports/sbom-reports/database-migrations
+          destination: database-migrations/sbom
+
+  release-acr:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Load the qualified PostgreSQL bootstrap image
+          command: bash .circleci/scripts/load-database-migrations-image.sh
+      - run:
+          name: Publish the approved runtime and PostgreSQL bootstrap images to Azure Container Registry
+          command: bash .circleci/scripts/publish-application-images.sh
+      - store_artifacts:
+          path: reports
+          destination: acr
+
+  terraform-validate:
+    docker:
+      - image: hashicorp/terraform:1.15.9
+    environment:
+      TF_IN_AUTOMATION: "true"
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run:
+          name: Validate Terraform configuration without a backend
+          command: |
+            cd ACA
+            terraform fmt -check -recursive
+            terraform init -backend=false
+            terraform validate
+
+workflows:
+  application-ci:
+    when: << pipeline.parameters.run_application_ci >>
+    jobs:
+      # Stage 1: application validation and source security run in parallel.
+      - backend-build-test
+      - frontend-build-test
+      - source-security-scan:
+          context:
+            - security-alerts
+      # Dependency SCA starts after backend-build-test has staged its resolved Maven POMs.
+      - dependency-scan:
+          context:
+            - security-alerts
+          requires:
+            - backend-build-test
+      # Stage 2: both quality gates wait for both successful builds, then run in parallel.
+      - backend-sonar:
+          context:
+            - sonarqube
+            - security-alerts
+          requires:
+            - backend-build-test
+            - frontend-build-test
+      - frontend-sonar:
+          context:
+            - sonarqube
+            - security-alerts
+          requires:
+            - backend-build-test
+            - frontend-build-test
+      # Stage 3: frontend and backend images build in parallel after every code gate passes.
+      - frontend-image-build:
+          requires:
+            - source-security-scan
+            - dependency-scan
+            - backend-sonar
+            - frontend-sonar
+      - backend-image-build:
+          requires:
+            - source-security-scan
+            - dependency-scan
+            - backend-sonar
+            - frontend-sonar
+      # Master-only migration qualification starts after the code gates and
+      # runs independently from the runtime image and DAST path.
+      - qualify-database-migrations-image:
+          requires:
+            - source-security-scan
+            - dependency-scan
+            - backend-sonar
+            - frontend-sonar
+          filters:
+            branches:
+              only: master
+      # Stage 4: Trivy scans the exact images from both image-build jobs.
+      - image-trivy-scan:
+          context:
+            - security-alerts
+          requires:
+            - frontend-image-build
+            - backend-image-build
+      # Stage 5: Syft publishes CycloneDX 1.6 SBOMs from the exact candidate images.
+      - dependency-track-sbom-publish:
+          context:
+            - sonarqube
+            - security-alerts
+          requires:
+            - image-trivy-scan
+      # Stage 6: Compose starts those images and validates the runtime integration.
+      - container-integration:
+          requires:
+            - dependency-track-sbom-publish
+      # Stage 7: a fresh stack from the same images is assessed with OWASP ZAP.
+      - dast-scan:
+          context:
+            - security-alerts
+            - DAST
+          requires:
+            - container-integration
+      # Stage 8: only master publishes images that passed every preceding gate.
+      - release-acr:
+          context:
+            - acr-publish
+          requires:
+            - dast-scan
+            - qualify-database-migrations-image
+          filters:
+            branches:
+              only: master
+
+  infrastructure-ci:
+    when: << pipeline.parameters.run_infrastructure_ci >>
+    jobs:
+      - terraform-validate

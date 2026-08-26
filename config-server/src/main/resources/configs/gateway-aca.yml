@@ -1,0 +1,30 @@
+eureka:
+  instance:
+    hostname: ${EUREKA_HOSTNAME_GATEWAY:gateway}
+    prefer-ip-address: false
+    instance-id: ${spring.application.name}:${HOSTNAME:${random.uuid}}
+    non-secure-port: 80
+    non-secure-port-enabled: true
+    secure-port-enabled: false
+  client:
+    service-url:
+      defaultZone: ${EUREKA_DEFAULT_ZONE:http://discovery-service/eureka}
+
+server:
+  forward-headers-strategy: native
+
+spring:
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: false
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins:
+              - ${CORS_ALLOWED_ORIGINS}
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}

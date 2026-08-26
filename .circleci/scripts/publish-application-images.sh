@@ -7,12 +7,15 @@ source "$(dirname "$0")/lib/application-images.sh"
 readonly ORAS_IMAGE="ghcr.io/oras-project/oras:v1.3.0@sha256:6ce045ce069a89934d6666b8b49f9c4c0145201bd6de6dbe2aee267814c55468"
 readonly SBOM_ARTIFACT_TYPE="application/vnd.cyclonedx+json"
 readonly SBOM_DIRECTORY="sbom-reports"
+readonly DATABASE_MIGRATIONS_SERVICE="database-migrations"
 
 : "${ACR_LOGIN_SERVER:?ACR_LOGIN_SERVER must be defined in the acr-publish CircleCI context}"
 : "${ACR_USERNAME:?ACR_USERNAME must be defined in the acr-publish CircleCI context}"
 : "${ACR_PASSWORD:?ACR_PASSWORD must be defined in the acr-publish CircleCI context}"
 
 configure_candidate_images
+
+readonly database_migrations_sbom="${SBOM_DIRECTORY}/${DATABASE_MIGRATIONS_SERVICE}/${DATABASE_MIGRATIONS_SERVICE}-${IMAGE_TAG}.cdx.json"
 
 for service in "${APP_SERVICES[@]}"; do
   sbom_file="${SBOM_DIRECTORY}/${service}/${service}-${IMAGE_TAG}.cdx.json"
@@ -21,6 +24,11 @@ for service in "${APP_SERVICES[@]}"; do
     exit 1
   }
 done
+
+[[ -s "$database_migrations_sbom" ]] || {
+  echo "SBOM is missing for ${DATABASE_MIGRATIONS_SERVICE}: ${database_migrations_sbom}" >&2
+  exit 1
+}
 
 docker pull "$ORAS_IMAGE"
 
@@ -69,3 +77,27 @@ for service in "${APP_SERVICES[@]}"; do
 
   printf '%s\n' "$target_reference" >> reports/acr-image-manifest.txt
 done
+
+database_migrations_source_image="${IMAGE_REPOSITORY_PREFIX}/${DATABASE_MIGRATIONS_SERVICE}:${IMAGE_TAG}"
+database_migrations_target_image="${ACR_LOGIN_SERVER}/${DATABASE_MIGRATIONS_SERVICE}:${IMAGE_TAG}"
+
+docker image tag "$database_migrations_source_image" "$database_migrations_target_image"
+docker push "$database_migrations_target_image"
+
+database_migrations_digest="$(oras resolve \
+  --registry-config /docker-config.json \
+  "$database_migrations_target_image")"
+[[ "$database_migrations_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+  echo "ORAS returned an invalid digest for ${database_migrations_target_image}: ${database_migrations_digest}" >&2
+  exit 1
+}
+
+database_migrations_target_reference="${ACR_LOGIN_SERVER}/${DATABASE_MIGRATIONS_SERVICE}@${database_migrations_digest}"
+oras attach \
+  --registry-config /docker-config.json \
+  --no-tty \
+  --artifact-type "$SBOM_ARTIFACT_TYPE" \
+  "$database_migrations_target_reference" \
+  "${DATABASE_MIGRATIONS_SERVICE}/${DATABASE_MIGRATIONS_SERVICE}-${IMAGE_TAG}.cdx.json:${SBOM_ARTIFACT_TYPE}"
+
+printf '%s\n' "$database_migrations_target_reference" >> reports/acr-image-manifest.txt

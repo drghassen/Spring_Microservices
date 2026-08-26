@@ -1,0 +1,28 @@
+# Copy to a local, ignored terraform.tfvars file for a real deployment.
+
+subscription_id     = "35b0da56-c3e1-44f6-9634-d20cec115304"
+resource_group_name = "internship_proxym"
+acr_name            = "ghassenspringservices"
+project_name        = "ghassen-dridi"
+environment         = "aca"
+
+vnet_address_space                       = ["10.80.0.0/16"]
+aca_infrastructure_subnet_address_prefix = "10.80.0.0/23"
+private_endpoints_subnet_address_prefix  = "10.80.2.0/24"
+postgresql_subnet_address_prefix         = "10.80.3.0/28"
+log_analytics_retention_in_days          = 30
+tags                                     = {}
+
+# Future PostgreSQL application account; it is provisioned in a separate step.
+postgresql_application_username = "steam_app"
+
+# Set only after a successful master release, for example:
+# application_image_tag = "build-<released-pipeline-number>"
+
+# Required only for a real deployment. Keep these outside Git:
+# TF_VAR_postgresql_administrator_login
+# TF_VAR_postgresql_administrator_password
+# TF_VAR_postgresql_application_password
+# TF_VAR_cosmos_mongodb_uri
+# TF_VAR_application_jwt_secret
+# TF_VAR_application_admin_password
