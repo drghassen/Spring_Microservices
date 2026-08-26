@@ -19,6 +19,13 @@ COPY bootstrap-postgresql.sh /usr/local/bin/bootstrap-postgresql
 
 RUN chmod 0555 /usr/local/bin/bootstrap-postgresql
 
-ENV PATH="/flyway:${PATH}"
+RUN install --directory --owner=postgres --group=postgres --mode=0700 /var/lib/postgresql/.flyway
+
+ENV PATH="/flyway:${PATH}" \
+    HOME="/var/lib/postgresql"
+
+WORKDIR /var/lib/postgresql
+
+USER postgres
 
 ENTRYPOINT ["/usr/local/bin/bootstrap-postgresql"]
