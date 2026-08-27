@@ -63,6 +63,51 @@ EOF
   echo "CircleCI environment CLI supports custom-audience OIDC."
 }
 
+aca_validate_circleci_oidc_token_claims() {
+  local oidc_token="$1"
+
+  [[ -n "$oidc_token" ]] || {
+    echo "CircleCI did not return an OIDC token." >&2
+    return 1
+  }
+
+  # Keep the token out of argv and avoid assigning to the readonly Bash
+  # constants. Python receives only the non-sensitive expected claim values as
+  # arguments and reads the token from an inherited, private file descriptor.
+  python3 - \
+    "$ACA_EXPECTED_CIRCLECI_VCS_ORIGIN" \
+    "$ACA_EXPECTED_CIRCLECI_VCS_REF" \
+    3<<<"$oidc_token" <<'PY'
+import base64
+import json
+import os
+import sys
+
+expected_origin = sys.argv[1]
+expected_ref = sys.argv[2]
+with os.fdopen(3, encoding="utf-8") as token_stream:
+    token = token_stream.read().strip()
+
+try:
+    payload = token.split(".", 2)[1]
+    payload += "=" * (-len(payload) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload))
+except (IndexError, ValueError, json.JSONDecodeError) as error:
+    raise SystemExit("Unable to validate the CircleCI OIDC token claims") from error
+
+audience = claims.get("aud", [])
+if isinstance(audience, str):
+    audience = [audience]
+
+if "api://AzureADTokenExchange" not in audience:
+    raise SystemExit("CircleCI OIDC token has an unexpected audience")
+if claims.get("oidc.circleci.com/vcs-origin") != expected_origin:
+    raise SystemExit("CircleCI OIDC token has an unexpected repository binding")
+if claims.get("oidc.circleci.com/vcs-ref") != expected_ref:
+    raise SystemExit("CircleCI OIDC token has an unexpected branch binding")
+PY
+}
+
 aca_authenticate_with_circleci_oidc() {
   local oidc_token
   local selected_subscription_id
@@ -86,38 +131,7 @@ aca_authenticate_with_circleci_oidc() {
     echo "CircleCI failed to issue a custom-audience OIDC token." >&2
     exit 1
   fi
-  [[ -n "$oidc_token" ]] || {
-    echo "CircleCI did not return an OIDC token." >&2
-    exit 1
-  }
-
-  OIDC_TOKEN="$oidc_token" \
-    ACA_EXPECTED_CIRCLECI_VCS_ORIGIN="$ACA_EXPECTED_CIRCLECI_VCS_ORIGIN" \
-    ACA_EXPECTED_CIRCLECI_VCS_REF="$ACA_EXPECTED_CIRCLECI_VCS_REF" \
-    python3 - <<'PY'
-import base64
-import json
-import os
-
-token = os.environ["OIDC_TOKEN"]
-try:
-    payload = token.split(".", 2)[1]
-    payload += "=" * (-len(payload) % 4)
-    claims = json.loads(base64.urlsafe_b64decode(payload))
-except (IndexError, ValueError, json.JSONDecodeError) as error:
-    raise SystemExit("Unable to validate the CircleCI OIDC token claims") from error
-
-audience = claims.get("aud", [])
-if isinstance(audience, str):
-    audience = [audience]
-
-if "api://AzureADTokenExchange" not in audience:
-    raise SystemExit("CircleCI OIDC token has an unexpected audience")
-if claims.get("oidc.circleci.com/vcs-origin") != os.environ["ACA_EXPECTED_CIRCLECI_VCS_ORIGIN"]:
-    raise SystemExit("CircleCI OIDC token has an unexpected repository binding")
-if claims.get("oidc.circleci.com/vcs-ref") != os.environ["ACA_EXPECTED_CIRCLECI_VCS_REF"]:
-    raise SystemExit("CircleCI OIDC token has an unexpected branch binding")
-PY
+  aca_validate_circleci_oidc_token_claims "$oidc_token"
 
   az login \
     --service-principal \

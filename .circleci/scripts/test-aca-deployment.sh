@@ -302,6 +302,50 @@ test_circleci_environment_cli_not_overwritten() {
   fi
 }
 
+make_test_oidc_token() {
+  local audience="$1"
+  local vcs_origin="$2"
+  local vcs_ref="$3"
+
+  python3 - "$audience" "$vcs_origin" "$vcs_ref" <<'PY'
+import base64
+import json
+import sys
+
+def encode(value):
+    raw = json.dumps(value, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+header = {"alg": "none", "typ": "JWT"}
+payload = {
+    "aud": sys.argv[1],
+    "oidc.circleci.com/vcs-origin": sys.argv[2],
+    "oidc.circleci.com/vcs-ref": sys.argv[3],
+}
+print(f"{encode(header)}.{encode(payload)}.test-signature")
+PY
+}
+
+test_oidc_claims_validation() {
+  local token
+  token="$(make_test_oidc_token \
+    'api://AzureADTokenExchange' \
+    "$ACA_EXPECTED_CIRCLECI_VCS_ORIGIN" \
+    "$ACA_EXPECTED_CIRCLECI_VCS_REF")"
+
+  aca_validate_circleci_oidc_token_claims "$token"
+}
+
+test_oidc_wrong_branch_rejected() {
+  local token
+  token="$(make_test_oidc_token \
+    'api://AzureADTokenExchange' \
+    "$ACA_EXPECTED_CIRCLECI_VCS_ORIGIN" \
+    'refs/heads/untrusted')"
+
+  aca_validate_circleci_oidc_token_claims "$token"
+}
+
 assert_succeeds "automatic initial installation mode" test_initial_mode
 assert_succeeds "automatic complete redeployment mode" test_redeploy_mode
 for partial_count in {1..8}; do
@@ -326,5 +370,7 @@ assert_succeeds "CircleCI approval and stable serial group block concurrent depl
 assert_succeeds "CircleCI environment CLI exposes custom-audience OIDC" test_circleci_environment_cli_capability
 assert_fails "CircleCI Local CLI is rejected for ACA OIDC" test_circleci_local_cli_rejected
 assert_succeeds "CircleCI environment CLI is never overwritten" test_circleci_environment_cli_not_overwritten
+assert_succeeds "CircleCI OIDC claims pass without readonly reassignment" test_oidc_claims_validation
+assert_fails "CircleCI OIDC token from an unexpected branch is rejected" test_oidc_wrong_branch_rejected
 
 printf 'ACA deployment mock suite passed: %s checks.\n' "$TEST_COUNT"
