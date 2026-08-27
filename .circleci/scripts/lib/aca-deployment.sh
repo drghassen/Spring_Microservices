@@ -142,9 +142,8 @@ aca_authenticate_with_circleci_oidc() {
   unset oidc_token
 
   az account set --subscription "$AZURE_SUBSCRIPTION_ID"
-  read -r selected_subscription_id selected_tenant_id < <(
-    az account show --query '[id, tenantId]' --output tsv
-  )
+  selected_subscription_id=$(az account show --query 'id' --output tsv)
+  selected_tenant_id=$(az account show --query 'tenantId' --output tsv)
   [[ "$selected_subscription_id" == "$AZURE_SUBSCRIPTION_ID" && \
     "$selected_tenant_id" == "$AZURE_TENANT_ID" ]] || {
     echo "Azure selected an unexpected subscription or tenant." >&2
