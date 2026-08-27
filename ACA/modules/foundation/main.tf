@@ -5,6 +5,10 @@ resource "azurerm_log_analytics_workspace" "this" {
   sku                 = "PerGB2018"
   retention_in_days   = var.log_analytics_retention_in_days
   tags                = var.tags
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_container_app_environment" "this" {
@@ -21,5 +25,9 @@ resource "azurerm_container_app_environment" "this" {
   workload_profile {
     name                  = "Consumption"
     workload_profile_type = "Consumption"
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }

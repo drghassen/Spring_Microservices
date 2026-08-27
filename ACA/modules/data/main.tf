@@ -2,6 +2,10 @@ resource "azurerm_private_dns_zone" "postgresql" {
   name                = "privatelink.postgres.database.azure.com"
   resource_group_name = var.resource_group_name
   tags                = var.tags
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "postgresql" {
@@ -11,6 +15,10 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgresql" {
   virtual_network_id    = var.virtual_network_id
   registration_enabled  = false
   tags                  = var.tags
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_postgresql_flexible_server" "this" {
@@ -32,6 +40,10 @@ resource "azurerm_postgresql_flexible_server" "this" {
   tags                          = var.tags
 
   depends_on = [azurerm_private_dns_zone_virtual_network_link.postgresql]
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_postgresql_flexible_server_database" "steam" {
@@ -39,6 +51,10 @@ resource "azurerm_postgresql_flexible_server_database" "steam" {
   server_id = azurerm_postgresql_flexible_server.this.id
   charset   = "UTF8"
   collation = "en_US.utf8"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_cosmosdb_account" "mongodb" {
@@ -70,12 +86,20 @@ resource "azurerm_cosmosdb_account" "mongodb" {
   }
 
   tags = var.tags
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_cosmosdb_mongo_database" "users" {
   name                = "users"
   resource_group_name = var.resource_group_name
   account_name        = azurerm_cosmosdb_account.mongodb.name
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_cosmosdb_mongo_collection" "users" {
@@ -93,12 +117,20 @@ resource "azurerm_cosmosdb_mongo_collection" "users" {
     keys   = ["username"]
     unique = true
   }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_cosmosdb_mongo_database" "library" {
   name                = "library"
   resource_group_name = var.resource_group_name
   account_name        = azurerm_cosmosdb_account.mongodb.name
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_cosmosdb_mongo_collection" "library" {
@@ -115,5 +147,9 @@ resource "azurerm_cosmosdb_mongo_collection" "library" {
   index {
     keys   = ["username"]
     unique = true
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }

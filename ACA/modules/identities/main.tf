@@ -3,6 +3,10 @@ resource "azurerm_user_assigned_identity" "apps" {
   location            = var.location
   resource_group_name = var.resource_group_name
   tags                = var.tags
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_role_assignment" "acr_pull" {

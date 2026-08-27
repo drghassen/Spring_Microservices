@@ -2,10 +2,13 @@
 
 set -euo pipefail
 
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/application-images.sh
 source "$(dirname "$0")/lib/application-images.sh"
 
 readonly DATABASE_MIGRATIONS_SERVICE="database-migrations"
 readonly DATABASE_MIGRATIONS_DOCKERFILE="database-migrations/Dockerfile"
+readonly DATABASE_MIGRATIONS_CONTEXT="database-migrations"
 readonly ARCHIVE_DIRECTORY="ci-database-migrations"
 readonly ARCHIVE_PATH="${ARCHIVE_DIRECTORY}/database-migrations-image.tar.zst"
 readonly SBOM_FILE="reports/sbom-reports/${DATABASE_MIGRATIONS_SERVICE}/${DATABASE_MIGRATIONS_SERVICE}-${IMAGE_TAG}.cdx.json"
@@ -37,7 +40,7 @@ syft() {
 docker build \
   --file "$DATABASE_MIGRATIONS_DOCKERFILE" \
   --tag "$candidate_image" \
-  .
+  "$DATABASE_MIGRATIONS_CONTEXT"
 
 mkdir -p reports/trivy-images .trivy-cache "$(dirname "$SBOM_FILE")" "$ARCHIVE_DIRECTORY"
 trivy image \

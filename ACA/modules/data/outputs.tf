@@ -17,3 +17,9 @@ output "cosmos_mongodb_account_id" {
   description = "Resource ID of the Azure Cosmos DB API for MongoDB account."
   value       = azurerm_cosmosdb_account.mongodb.id
 }
+
+output "cosmos_mongodb_uri" {
+  description = "Sensitive primary MongoDB connection string consumed directly by the Container Apps module."
+  value       = azurerm_cosmosdb_account.mongodb.primary_mongodb_connection_string
+  sensitive   = true
+}

@@ -147,3 +147,13 @@ output "gateway_fqdn" {
   description = "Internal ingress FQDN of the gateway Container App."
   value       = module.apps.gateway_fqdn
 }
+
+output "database_migrations_job_id" {
+  description = "Resource ID of the PostgreSQL database migrations Container Apps Job."
+  value       = module.apps.database_migrations_job_id
+}
+
+output "database_migrations_job_name" {
+  description = "Name of the PostgreSQL database migrations Container Apps Job."
+  value       = module.apps.database_migrations_job_name
+}

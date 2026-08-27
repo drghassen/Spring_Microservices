@@ -4,6 +4,10 @@ resource "azurerm_virtual_network" "this" {
   resource_group_name = var.resource_group_name
   address_space       = var.vnet_address_space
   tags                = var.tags
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_subnet" "aca_infrastructure" {
@@ -22,6 +26,10 @@ resource "azurerm_subnet" "aca_infrastructure" {
       ]
     }
   }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_subnet" "private_endpoints" {
@@ -29,6 +37,10 @@ resource "azurerm_subnet" "private_endpoints" {
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = [var.private_endpoints_subnet_address_prefix]
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_subnet" "postgresql" {
@@ -47,5 +59,9 @@ resource "azurerm_subnet" "postgresql" {
         "Microsoft.Network/virtualNetworks/subnets/join/action",
       ]
     }
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }

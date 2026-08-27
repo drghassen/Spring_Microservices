@@ -63,16 +63,21 @@ module "apps" {
   source = "./modules/apps"
 
   resource_group_name                      = data.azurerm_resource_group.current.name
+  location                                 = data.azurerm_resource_group.current.location
   container_app_environment_id             = module.foundation.container_app_environment_id
   container_app_environment_default_domain = module.foundation.container_app_environment_default_domain
   apps_managed_identity_id                 = module.identities.apps_managed_identity_id
   acr_login_server                         = data.azurerm_container_registry.current.login_server
-  application_image_tag                    = var.application_image_tag
+  application_image_digests                = var.application_image_digests
+  database_migrations_image_digest         = var.database_migrations_image_digest
+  active_applications                      = var.active_applications
   postgresql_server_fqdn                   = module.data.postgresql_server_fqdn
   postgresql_database_name                 = module.data.postgresql_database_name
+  postgresql_administrator_login           = var.postgresql_administrator_login
+  postgresql_administrator_password        = var.postgresql_administrator_password
   postgresql_application_username          = var.postgresql_application_username
   postgresql_application_password          = var.postgresql_application_password
-  cosmos_mongodb_uri                       = var.cosmos_mongodb_uri
+  cosmos_mongodb_uri                       = module.data.cosmos_mongodb_uri
   application_jwt_secret                   = var.application_jwt_secret
   application_admin_password               = var.application_admin_password
   tags                                     = local.effective_tags

@@ -47,6 +47,8 @@ validate_connection_settings() {
 }
 
 admin_psql() {
+  # POSTGRES_HOST is validated indirectly from REQUIRED_VARIABLES before this function is called.
+  # shellcheck disable=SC2153
   PGPASSWORD="$POSTGRES_ADMIN_PASSWORD" \
     PGSSLMODE="$POSTGRES_SSLMODE" \
     psql \
@@ -61,9 +63,7 @@ admin_psql() {
 }
 
 wait_for_administrator_connection() {
-  local attempt
-
-  for attempt in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     if admin_psql --quiet --command='SELECT 1' >/dev/null 2>&1; then
       return 0
     fi
@@ -75,16 +75,21 @@ wait_for_administrator_connection() {
   exit 1
 }
 
-create_application_role_if_missing() {
+reconcile_application_role() {
   local role_exists
   local escaped_application_password
 
   role_exists="$(admin_psql --tuples-only --no-align --command="SELECT 1 FROM pg_roles WHERE rolname = '${POSTGRES_APPLICATION_USERNAME}';")"
+  escaped_application_password="${POSTGRES_APPLICATION_PASSWORD//\'/\'\'}"
 
   if [[ "$role_exists" != "1" ]]; then
-    escaped_application_password="${POSTGRES_APPLICATION_PASSWORD//\'/\'\'}"
-
     printf 'CREATE ROLE "%s" LOGIN PASSWORD '\''%s'\'';\n' \
+      "$POSTGRES_APPLICATION_USERNAME" \
+      "$escaped_application_password" \
+      | admin_psql \
+      >/dev/null
+  else
+    printf 'ALTER ROLE "%s" WITH LOGIN PASSWORD '\''%s'\'';\n' \
       "$POSTGRES_APPLICATION_USERNAME" \
       "$escaped_application_password" \
       | admin_psql \
@@ -123,7 +128,7 @@ main() {
   validate_connection_settings
 
   wait_for_administrator_connection
-  create_application_role_if_missing
+  reconcile_application_role
   grant_application_permissions
   run_flyway_as_application_role
 

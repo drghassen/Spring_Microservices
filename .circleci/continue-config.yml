@@ -15,6 +15,66 @@ orbs:
   browser-tools: circleci/browser-tools@1.4.8
 
 commands:
+  install-aca-deployment-tools:
+    description: Install checksum-verified Terraform, jq, and CircleCI CLI releases.
+    steps:
+      - run:
+          name: Verify executor tools and install pinned ACA deployment CLIs
+          command: |
+            readonly terraform_version="1.15.9"
+            readonly terraform_archive="terraform_${terraform_version}_linux_amd64.zip"
+            readonly terraform_sha256="76edd0b22d2f27d3d2e097cd793209646f719cf60f02ff3af626b07361137da1"
+            readonly jq_version="1.7.1"
+            readonly jq_sha256="5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5"
+            readonly circleci_version="1.0.48773"
+            readonly circleci_archive="circleci-cli_${circleci_version}_linux_amd64.tar.gz"
+            readonly circleci_sha256="667d20cf172e1f263c37c106e0a7a3fdd64f9a4a6ac0fae1acbe1b16e8412972"
+            readonly containerapp_extension_version="0.3.55"
+            readonly containerapp_extension_file="containerapp-${containerapp_extension_version}-py2.py3-none-any.whl"
+            readonly containerapp_extension_sha256="d6971ccf8ca73e03df7e123fa7c85e5e63235bb1ac1c274c26bbc1f509d68115"
+
+            for required_command in az curl python3 tar unzip sha256sum; do
+              command -v "$required_command" >/dev/null 2>&1 || {
+                printf '%s is missing from the pinned cimg/azure executor.\n' "$required_command" >&2
+                exit 1
+              }
+            done
+
+            curl --fail --location --silent --show-error \
+              --output "/tmp/${terraform_archive}" \
+              "https://releases.hashicorp.com/terraform/${terraform_version}/${terraform_archive}"
+            printf '%s  %s\n' "$terraform_sha256" "/tmp/${terraform_archive}" | sha256sum --check
+            mkdir -p /tmp/terraform-cli
+            unzip -q "/tmp/${terraform_archive}" -d /tmp/terraform-cli
+            sudo install -m 0755 /tmp/terraform-cli/terraform /usr/local/bin/terraform
+
+            curl --fail --location --silent --show-error \
+              --output /tmp/jq-linux-amd64 \
+              "https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-linux-amd64"
+            printf '%s  %s\n' "$jq_sha256" /tmp/jq-linux-amd64 | sha256sum --check
+            sudo install -m 0755 /tmp/jq-linux-amd64 /usr/local/bin/jq
+
+            curl --fail --location --silent --show-error \
+              --output "/tmp/${circleci_archive}" \
+              "https://github.com/CircleCI-Public/circleci-cli/releases/download/v${circleci_version}/${circleci_archive}"
+            printf '%s  %s\n' "$circleci_sha256" "/tmp/${circleci_archive}" | sha256sum --check
+            tar -xzf "/tmp/${circleci_archive}" -C /tmp circleci
+            sudo install -m 0755 /tmp/circleci /usr/local/bin/circleci
+
+            curl --fail --location --silent --show-error \
+              --output "/tmp/${containerapp_extension_file}" \
+              "https://azcliprod.blob.core.windows.net/cli-extensions/${containerapp_extension_file}"
+            printf '%s  %s\n' "$containerapp_extension_sha256" "/tmp/${containerapp_extension_file}" \
+              | sha256sum --check
+            az extension add --source "/tmp/${containerapp_extension_file}" --yes --only-show-errors
+            test "$(az extension show --name containerapp --query version --output tsv)" = \
+              "$containerapp_extension_version"
+
+            terraform version
+            jq --version
+            az version --output none
+            circleci version
+
   configure-candidate-image-tag:
     description: Export the pipeline-scoped Docker tag used by every candidate image job.
     steps:
@@ -411,7 +471,7 @@ jobs:
 
   terraform-validate:
     docker:
-      - image: hashicorp/terraform:1.15.9
+      - image: hashicorp/terraform:1.15.9@sha256:b88da40ffe55e3285b9246333814cba9fc39a2743b8fb8c64483063b0c3d6994
     environment:
       TF_IN_AUTOMATION: "true"
     working_directory: ~/project
@@ -424,6 +484,36 @@ jobs:
             terraform fmt -check -recursive
             terraform init -backend=false
             terraform validate
+
+  plan-aca:
+    docker:
+      - image: cimg/azure:2025.01.1@sha256:c1a7a3997721cbcd4dd55e249e59c07e8cf94afb5c4ed263c8c536ddc34b2648
+    environment:
+      TF_IN_AUTOMATION: "true"
+    working_directory: ~/project
+    steps:
+      - checkout
+      - install-aca-deployment-tools
+      - run:
+          name: Recompute and inspect the automatic ACA release plan without applying it
+          command: |
+            export IMAGE_TAG='build-<< pipeline.number >>'
+            bash .circleci/scripts/deploy-aca.sh plan
+
+  deploy-aca:
+    docker:
+      - image: cimg/azure:2025.01.1@sha256:c1a7a3997721cbcd4dd55e249e59c07e8cf94afb5c4ed263c8c536ddc34b2648
+    environment:
+      TF_IN_AUTOMATION: "true"
+    working_directory: ~/project
+    steps:
+      - checkout
+      - install-aca-deployment-tools
+      - run:
+          name: Recompute, validate, migrate, and deploy ACA in dependency order
+          command: |
+            export IMAGE_TAG='build-<< pipeline.number >>'
+            bash .circleci/scripts/deploy-aca.sh deploy
 
 workflows:
   application-ci:
@@ -512,6 +602,32 @@ workflows:
           requires:
             - dast-scan
             - qualify-database-migrations-image
+          filters:
+            branches:
+              only: master
+      # Stage 9: calculate a read-only plan, require approval, then recalculate before apply.
+      - plan-aca:
+          context:
+            - aca-deploy
+          requires:
+            - release-acr
+          filters:
+            branches:
+              only: master
+      - hold-aca-deployment:
+          type: approval
+          requires:
+            - release-acr
+            - plan-aca
+          filters:
+            branches:
+              only: master
+      - deploy-aca:
+          context:
+            - aca-deploy
+          requires:
+            - hold-aca-deployment
+          serial-group: << pipeline.project.slug >>/aca-production-deployment
           filters:
             branches:
               only: master

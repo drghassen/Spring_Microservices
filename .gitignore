@@ -55,3 +55,4 @@ reports/zap/*.key
 /reports/trivy-filesystem.json
 /reports/dast.log
 /reports/container-integration.log
+/reports/

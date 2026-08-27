@@ -6,6 +6,9 @@ parameters:
   run_oidc_claims_audit:
     type: boolean
     default: false
+  run_azure_oidc_audit:
+    type: boolean
+    default: false
 
 orbs:
   continuation: circleci/continuation@2.0.1
@@ -97,7 +100,7 @@ jobs:
       - run:
           name: Print selected non-sensitive CircleCI OIDC V2 claims
           command: |
-            python3 - \<<'PY'
+            python3 - <<'PY'
             import base64
             import json
             import os
@@ -125,13 +128,65 @@ jobs:
             print(json.dumps({name: claims.get(name) for name in claim_names}, indent=2))
             PY
 
+  azure-oidc-audit:
+    docker:
+      - image: cimg/azure:2025.01.1@sha256:c1a7a3997721cbcd4dd55e249e59c07e8cf94afb5c4ed263c8c536ddc34b2648
+    steps:
+      - checkout
+      - run:
+          name: Install pinned CircleCI CLI for custom-audience OIDC
+          command: |
+            readonly circleci_version="1.0.48773"
+            readonly circleci_archive="circleci-cli_${circleci_version}_linux_amd64.tar.gz"
+            readonly circleci_sha256="667d20cf172e1f263c37c106e0a7a3fdd64f9a4a6ac0fae1acbe1b16e8412972"
+
+            for required_command in az curl python3 tar sha256sum; do
+              command -v "$required_command" >/dev/null 2>&1 || {
+                printf '%s is missing from the pinned cimg/azure executor.\n' "$required_command" >&2
+                exit 1
+              }
+            done
+            curl --fail --location --silent --show-error \
+              --output "/tmp/${circleci_archive}" \
+              "https://github.com/CircleCI-Public/circleci-cli/releases/download/v${circleci_version}/${circleci_archive}"
+            printf '%s  %s\n' "$circleci_sha256" "/tmp/${circleci_archive}" \
+              | sha256sum --check
+            tar -xzf "/tmp/${circleci_archive}" -C /tmp circleci
+            sudo install -m 0755 /tmp/circleci /usr/local/bin/circleci
+            circleci version
+      - run:
+          name: Validate Azure OIDC authentication and non-destructive permissions
+          command: bash .circleci/scripts/azure-oidc-audit.sh
+
 workflows:
   setup-path-filtering:
-    unless: << pipeline.parameters.run_oidc_claims_audit >>
+    when:
+      and:
+        - not: << pipeline.parameters.run_oidc_claims_audit >>
+        - not: << pipeline.parameters.run_azure_oidc_audit >>
     jobs:
       - select-ci-workflows
 
   oidc-claims-audit:
-    when: << pipeline.parameters.run_oidc_claims_audit >>
+    when:
+      and:
+        - << pipeline.parameters.run_oidc_claims_audit >>
+        - not: << pipeline.parameters.run_azure_oidc_audit >>
     jobs:
-      - oidc-claims-audit
+      - oidc-claims-audit:
+          filters:
+            branches:
+              only: master
+
+  azure-oidc-audit:
+    when:
+      and:
+        - << pipeline.parameters.run_azure_oidc_audit >>
+        - not: << pipeline.parameters.run_oidc_claims_audit >>
+    jobs:
+      - azure-oidc-audit:
+          context:
+            - aca-deploy
+          filters:
+            branches:
+              only: master

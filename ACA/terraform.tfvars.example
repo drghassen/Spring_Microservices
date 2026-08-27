@@ -16,13 +16,13 @@ tags                                     = {}
 # Future PostgreSQL application account; it is provisioned in a separate step.
 postgresql_application_username = "steam_app"
 
-# Set only after a successful master release, for example:
-# application_image_tag = "build-<released-pipeline-number>"
+# The deployment script resolves the released build tag to immutable ACR
+# digests and supplies application_image_digests plus
+# database_migrations_image_digest to Terraform. Do not store them here.
 
 # Required only for a real deployment. Keep these outside Git:
 # TF_VAR_postgresql_administrator_login
 # TF_VAR_postgresql_administrator_password
 # TF_VAR_postgresql_application_password
-# TF_VAR_cosmos_mongodb_uri
 # TF_VAR_application_jwt_secret
 # TF_VAR_application_admin_password

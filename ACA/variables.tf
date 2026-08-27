@@ -88,8 +88,8 @@ variable "postgresql_administrator_login" {
   sensitive   = true
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9]{1,63}$", var.postgresql_administrator_login)) && !startswith(lower(var.postgresql_administrator_login), "pg_")
-    error_message = "postgresql_administrator_login must contain 1-63 letters or digits and must not begin with pg_."
+    condition     = can(regex("^[a-z_][a-z0-9_]{0,62}$", var.postgresql_administrator_login)) && !startswith(var.postgresql_administrator_login, "pg_")
+    error_message = "postgresql_administrator_login must be a safe lowercase PostgreSQL identifier and must not begin with pg_."
   }
 }
 
@@ -104,39 +104,83 @@ variable "postgresql_administrator_password" {
   }
 }
 
-variable "application_image_tag" {
-  description = "Required shared immutable image tag for all Azure Container Apps."
+variable "application_image_digests" {
+  description = "Immutable ACR digests for all nine application images, keyed by application name."
+  type        = map(string)
+
+  validation {
+    condition = toset(keys(var.application_image_digests)) == toset([
+      "client",
+      "config-server",
+      "discovery-service",
+      "gateway",
+      "games-service",
+      "library-service",
+      "order-service",
+      "payment-service",
+      "user-service"
+      ]) && alltrue([
+      for digest in values(var.application_image_digests) : can(regex("^sha256:[0-9a-f]{64}$", digest))
+    ])
+    error_message = "application_image_digests must contain exactly the nine known applications with valid sha256 digests."
+  }
+}
+
+variable "database_migrations_image_digest" {
+  description = "Immutable ACR digest for the PostgreSQL migration image."
   type        = string
 
   validation {
-    condition     = var.application_image_tag != "latest"
-    error_message = "application_image_tag must not be latest."
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.database_migrations_image_digest))
+    error_message = "database_migrations_image_digest must be a valid sha256 digest."
   }
+}
+
+variable "active_applications" {
+  description = "Applications allowed to keep their normal minimum replicas. All applications remain declared; the default activates all nine."
+  type        = set(string)
+  default = [
+    "client",
+    "config-server",
+    "discovery-service",
+    "gateway",
+    "games-service",
+    "library-service",
+    "order-service",
+    "payment-service",
+    "user-service"
+  ]
 
   validation {
-    condition     = var.application_image_tag != "build-31"
-    error_message = "application_image_tag must not be build-31."
-  }
-
-  validation {
-    condition     = can(regex("^build-[0-9]+$", var.application_image_tag))
-    error_message = "application_image_tag must match build-<number>."
+    condition = alltrue([
+      for app in var.active_applications : contains([
+        "client",
+        "config-server",
+        "discovery-service",
+        "gateway",
+        "games-service",
+        "library-service",
+        "order-service",
+        "payment-service",
+        "user-service"
+      ], app)
+    ])
+    error_message = "active_applications must only contain known application names."
   }
 }
 
 variable "postgresql_application_username" {
   description = "Required PostgreSQL application username, distinct from the administrator account."
   type        = string
+
+  validation {
+    condition     = can(regex("^[a-z_][a-z0-9_]{0,62}$", var.postgresql_application_username)) && !startswith(var.postgresql_application_username, "pg_")
+    error_message = "postgresql_application_username must be a safe lowercase PostgreSQL identifier and must not begin with pg_."
+  }
 }
 
 variable "postgresql_application_password" {
   description = "Required PostgreSQL application password."
-  type        = string
-  sensitive   = true
-}
-
-variable "cosmos_mongodb_uri" {
-  description = "Required Cosmos DB MongoDB connection URI."
   type        = string
   sensitive   = true
 }
