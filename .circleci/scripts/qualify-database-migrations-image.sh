@@ -14,6 +14,11 @@ readonly ARCHIVE_PATH="${ARCHIVE_DIRECTORY}/database-migrations-image.tar.zst"
 readonly SBOM_FILE="reports/sbom-reports/${DATABASE_MIGRATIONS_SERVICE}/${DATABASE_MIGRATIONS_SERVICE}-${IMAGE_TAG}.cdx.json"
 readonly TRIVY_IMAGE="aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f"
 readonly SYFT_IMAGE="anchore/syft:v1.50.0@sha256:1288ea4c8b38767b4e620c1e312c8cb26b6e887a99b4f07ab6cd19fc6f225026"
+readonly TRIVY_DB_PRIMARY_REPOSITORY="public.ecr.aws/aquasecurity/trivy-db:2"
+readonly TRIVY_DB_FALLBACK_REPOSITORY="ghcr.io/aquasecurity/trivy-db:2"
+readonly TRIVY_JAVA_DB_PRIMARY_REPOSITORY="public.ecr.aws/aquasecurity/trivy-java-db:1"
+readonly TRIVY_JAVA_DB_FALLBACK_REPOSITORY="ghcr.io/aquasecurity/trivy-java-db:1"
+readonly TRIVY_DOWNLOAD_TIMEOUT="45m"
 
 configure_candidate_images
 ensure_jq
@@ -24,6 +29,7 @@ readonly trivy_report="reports/trivy-images/${DATABASE_MIGRATIONS_SERVICE}.json"
 
 trivy() {
   docker run --rm \
+    -e GODEBUG=http2client=0 \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v "$PWD/reports:/reports" \
     -v "$PWD/.trivy-cache:/root/.cache/" \
@@ -32,6 +38,7 @@ trivy() {
 
 syft() {
   docker run --rm \
+    -e SYFT_CHECK_FOR_APP_UPDATE=false \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v "$PWD/reports:/reports" \
     "$SYFT_IMAGE" "$@"
@@ -43,6 +50,25 @@ docker build \
   "$DATABASE_MIGRATIONS_CONTEXT"
 
 mkdir -p reports/trivy-images .trivy-cache "$(dirname "$SBOM_FILE")" "$ARCHIVE_DIRECTORY"
+
+# Download both indexes independently so a slow registry cannot make the image
+# scan appear stalled. The cache is reused without network access below.
+trivy image \
+  --download-db-only \
+  --db-repository "$TRIVY_DB_PRIMARY_REPOSITORY" \
+  --db-repository "$TRIVY_DB_FALLBACK_REPOSITORY" \
+  --no-progress \
+  --skip-version-check \
+  --timeout "$TRIVY_DOWNLOAD_TIMEOUT"
+
+trivy image \
+  --download-java-db-only \
+  --java-db-repository "$TRIVY_JAVA_DB_PRIMARY_REPOSITORY" \
+  --java-db-repository "$TRIVY_JAVA_DB_FALLBACK_REPOSITORY" \
+  --no-progress \
+  --skip-version-check \
+  --timeout "$TRIVY_DOWNLOAD_TIMEOUT"
+
 trivy image \
   --scanners vuln \
   --severity HIGH,CRITICAL \
@@ -50,8 +76,10 @@ trivy image \
   --format json \
   --output "/reports/trivy-images/${DATABASE_MIGRATIONS_SERVICE}.json" \
   --no-progress \
+  --skip-db-update \
+  --skip-java-db-update \
   --skip-version-check \
-  --timeout 20m \
+  --timeout "$TRIVY_DOWNLOAD_TIMEOUT" \
   "$candidate_image"
 
 [[ -s "$trivy_report" ]] || {

@@ -1,31 +1,39 @@
-FROM flyway/flyway:11.17.1 AS flyway
+FROM docker.io/flyway/flyway:13.3.0-alpine@sha256:fb13953f16913efd313f202ec4b4ed34fd2ea14cc51401eb36ea9818c0df2918
 
-RUN curl --fail --silent --show-error --location \
-    --output /tmp/flyway-database-postgresql-11.17.1.jar \
-    https://repo1.maven.org/maven2/org/flywaydb/flyway-database-postgresql/11.17.1/flyway-database-postgresql-11.17.1.jar \
-    && echo "7456d20a7fdc1c0e4cd84edd99b55ed744b49eba559480f2630257842bdff805  /tmp/flyway-database-postgresql-11.17.1.jar" | sha256sum --check \
-    && install --mode=0644 /tmp/flyway-database-postgresql-11.17.1.jar /flyway/drivers/flyway-database-postgresql-11.17.1.jar \
-    && rm --force /tmp/flyway-database-postgresql-11.17.1.jar
+RUN apk upgrade --no-cache \
+    && apk add --no-cache postgresql17-client \
+    && find /flyway/drivers -mindepth 1 -maxdepth 1 \
+        ! -name 'postgresql-42.7.12.jar' -exec rm -rf {} + \
+    && for plugin in /flyway/lib/flyway/flyway-database-*.jar; do \
+        case "$plugin" in \
+          */flyway-database-postgresql-13.3.0.jar) ;; \
+          *) rm -f -- "$plugin" ;; \
+        esac; \
+      done \
+    && rm -f -- \
+        /flyway/lib/flyway/flyway-firebird-*.jar \
+        /flyway/lib/flyway/flyway-gcp-*.jar \
+        /flyway/lib/flyway/flyway-locations-s3-*.jar \
+        /flyway/lib/flyway/flyway-mysql-*.jar \
+        /flyway/lib/flyway/flyway-nc-*.jar \
+        /flyway/lib/flyway/flyway-singlestore-*.jar \
+        /flyway/lib/flyway/flyway-sqlserver-*.jar \
+    && addgroup -S -g 10001 migrator \
+    && adduser -S -D -H -u 10001 -G migrator migrator
 
-FROM postgres:16.10-bookworm
-
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends openjdk-17-jre-headless \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=flyway /flyway /flyway
-COPY src/main/resources/db/migration/V1__initial_steam_schema.sql /flyway/sql/V1__initial_steam_schema.sql
+COPY src/main/resources/db/migration/V1__initial_steam_schema.sql /flyway/migrations/V1__initial_steam_schema.sql
 COPY bootstrap-postgresql.sh /usr/local/bin/bootstrap-postgresql
 
-RUN chmod 0555 /usr/local/bin/bootstrap-postgresql
-
-RUN install --directory --owner=postgres --group=postgres --mode=0700 /var/lib/postgresql/.flyway
+RUN chmod 0555 /usr/local/bin/bootstrap-postgresql \
+    && mkdir -p /var/lib/migrator/.flyway \
+    && chown -R migrator:migrator /var/lib/migrator \
+    && chmod 0700 /var/lib/migrator/.flyway
 
 ENV PATH="/flyway:${PATH}" \
-    HOME="/var/lib/postgresql"
+    HOME="/var/lib/migrator"
 
-WORKDIR /var/lib/postgresql
+WORKDIR /var/lib/migrator
 
-USER postgres
+USER 10001:10001
 
 ENTRYPOINT ["/usr/local/bin/bootstrap-postgresql"]

@@ -12,7 +12,7 @@ readonly REQUIRED_VARIABLES=(
 readonly POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 readonly POSTGRES_DATABASE="${POSTGRES_DATABASE:-steam}"
 readonly POSTGRES_SSLMODE="${POSTGRES_SSLMODE:-require}"
-readonly MIGRATIONS_DIRECTORY="/flyway/sql"
+readonly MIGRATIONS_DIRECTORY="/flyway/migrations"
 
 require_environment() {
   local variable_name
