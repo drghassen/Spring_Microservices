@@ -16,29 +16,32 @@ orbs:
 
 commands:
   install-aca-deployment-tools:
-    description: Install checksum-verified Terraform, jq, and CircleCI CLI releases.
+    description: Preserve CircleCI's environment CLI and install checksum-verified ACA tools.
     steps:
       - run:
-          name: Verify executor tools and install pinned ACA deployment CLIs
+          name: Verify CircleCI OIDC support and install pinned ACA deployment tools
           command: |
             readonly terraform_version="1.15.9"
             readonly terraform_archive="terraform_${terraform_version}_linux_amd64.zip"
             readonly terraform_sha256="76edd0b22d2f27d3d2e097cd793209646f719cf60f02ff3af626b07361137da1"
             readonly jq_version="1.7.1"
             readonly jq_sha256="5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5"
-            readonly circleci_version="1.0.48773"
-            readonly circleci_archive="circleci-cli_${circleci_version}_linux_amd64.tar.gz"
-            readonly circleci_sha256="667d20cf172e1f263c37c106e0a7a3fdd64f9a4a6ac0fae1acbe1b16e8412972"
             readonly containerapp_extension_version="0.3.55"
             readonly containerapp_extension_file="containerapp-${containerapp_extension_version}-py2.py3-none-any.whl"
             readonly containerapp_extension_sha256="d6971ccf8ca73e03df7e123fa7c85e5e63235bb1ac1c274c26bbc1f509d68115"
 
-            for required_command in az curl python3 tar unzip sha256sum; do
+            for required_command in az curl python3 unzip sha256sum; do
               command -v "$required_command" >/dev/null 2>&1 || {
                 printf '%s is missing from the pinned cimg/azure executor.\n' "$required_command" >&2
                 exit 1
               }
             done
+
+            # CircleCI injects a task-agent environment CLI into every job. The
+            # similarly named Local CLI does not implement custom-audience OIDC
+            # and must never replace the injected binary.
+            source .circleci/scripts/lib/aca-deployment.sh
+            aca_require_circleci_environment_cli
 
             curl --fail --location --silent --show-error \
               --output "/tmp/${terraform_archive}" \
@@ -55,13 +58,6 @@ commands:
             sudo install -m 0755 /tmp/jq-linux-amd64 /usr/local/bin/jq
 
             curl --fail --location --silent --show-error \
-              --output "/tmp/${circleci_archive}" \
-              "https://github.com/CircleCI-Public/circleci-cli/releases/download/v${circleci_version}/${circleci_archive}"
-            printf '%s  %s\n' "$circleci_sha256" "/tmp/${circleci_archive}" | sha256sum --check
-            tar -xzf "/tmp/${circleci_archive}" -C /tmp circleci
-            sudo install -m 0755 /tmp/circleci /usr/local/bin/circleci
-
-            curl --fail --location --silent --show-error \
               --output "/tmp/${containerapp_extension_file}" \
               "https://azcliprod.blob.core.windows.net/cli-extensions/${containerapp_extension_file}"
             printf '%s  %s\n' "$containerapp_extension_sha256" "/tmp/${containerapp_extension_file}" \
@@ -73,7 +69,6 @@ commands:
             terraform version
             jq --version
             az version --output none
-            circleci version
 
   configure-candidate-image-tag:
     description: Export the pipeline-scoped Docker tag used by every candidate image job.

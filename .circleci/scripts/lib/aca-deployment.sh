@@ -47,6 +47,22 @@ aca_require_command() {
   }
 }
 
+aca_require_circleci_environment_cli() {
+  local oidc_help
+
+  aca_require_command circleci
+  if ! oidc_help="$(circleci run oidc get --help 2>&1)" || \
+    [[ "$oidc_help" != *"--claims"* ]]; then
+    cat >&2 <<'EOF'
+CircleCI's task-agent environment CLI with custom-audience OIDC support is required.
+Do not replace it with the similarly named CircleCI Local CLI.
+EOF
+    return 1
+  fi
+
+  echo "CircleCI environment CLI supports custom-audience OIDC."
+}
+
 aca_authenticate_with_circleci_oidc() {
   local oidc_token
   local selected_subscription_id
@@ -62,10 +78,14 @@ aca_authenticate_with_circleci_oidc() {
     exit 1
   }
 
-  oidc_token="$(
+  aca_require_circleci_environment_cli
+  if ! oidc_token="$(
     circleci run oidc get \
       --claims '{"aud":"api://AzureADTokenExchange"}'
-  )"
+  )"; then
+    echo "CircleCI failed to issue a custom-audience OIDC token." >&2
+    exit 1
+  fi
   [[ -n "$oidc_token" ]] || {
     echo "CircleCI did not return an OIDC token." >&2
     exit 1

@@ -275,6 +275,33 @@ test_circleci_serial_gate() {
   if grep -A8 -- '- hold-aca-deployment:' "$CONTINUE_CONFIG" | grep -q 'context:'; then return 1; fi
 }
 
+test_circleci_environment_cli_capability() {
+  circleci() {
+    [[ "$*" == "run oidc get --help" ]] || return 1
+    printf '%s\n' 'Usage: circleci run oidc get --claims JSON'
+  }
+
+  aca_require_circleci_environment_cli >/dev/null
+}
+
+test_circleci_local_cli_rejected() {
+  circleci() {
+    [[ "$*" == "run oidc get --help" ]] || return 1
+    printf '%s\n' 'Trigger, watch and cancel CI runs'
+  }
+
+  aca_require_circleci_environment_cli
+}
+
+test_circleci_environment_cli_not_overwritten() {
+  grep -q 'aca_require_circleci_environment_cli' "$CONTINUE_CONFIG"
+  grep -q 'aca_require_circleci_environment_cli' "$ROOT_CONFIG"
+  if grep -Eq 'CircleCI-Public/circleci-cli|circleci_archive|install .*/circleci' \
+    "$CONTINUE_CONFIG" "$ROOT_CONFIG"; then
+    return 1
+  fi
+}
+
 assert_succeeds "automatic initial installation mode" test_initial_mode
 assert_succeeds "automatic complete redeployment mode" test_redeploy_mode
 for partial_count in {1..8}; do
@@ -296,5 +323,8 @@ assert_succeeds "sensitive plan value is absent from summary" test_plan_sensitiv
 assert_succeeds "Cosmos URI is derived, injected, sensitive, and not context-driven" test_cosmos_derivation
 assert_succeeds "OIDC state audit is read-only and does not infer write" test_oidc_audit_read_only
 assert_succeeds "CircleCI approval and stable serial group block concurrent deployment" test_circleci_serial_gate
+assert_succeeds "CircleCI environment CLI exposes custom-audience OIDC" test_circleci_environment_cli_capability
+assert_fails "CircleCI Local CLI is rejected for ACA OIDC" test_circleci_local_cli_rejected
+assert_succeeds "CircleCI environment CLI is never overwritten" test_circleci_environment_cli_not_overwritten
 
 printf 'ACA deployment mock suite passed: %s checks.\n' "$TEST_COUNT"
