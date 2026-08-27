@@ -422,7 +422,7 @@ apply_validated_plan() {
     exit 1
   }
   printf 'Applying exact validated ACA plan: %s\n' "$phase_name"
-  if ! terraform -chdir="$ACA_TERRAFORM_DIRECTORY" apply -auto-approve \
+  if ! terraform -chdir="$ACA_TERRAFORM_DIRECTORY" apply \
     -input=false -lock-timeout=10m "$LAST_PLAN_FILE" >"$apply_log" 2>&1; then
     printf 'Terraform apply failed for phase %s; temporary diagnostics will be deleted.\n' "$phase_name" >&2
     exit 1

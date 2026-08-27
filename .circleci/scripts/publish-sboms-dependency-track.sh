@@ -10,6 +10,7 @@ readonly SBOM_REPORT_ROOT="reports/sbom-reports"
 readonly DTRACK_REPORT_ROOT="reports/dependency-track"
 readonly DTRACK_WAIT_ATTEMPTS="${DTRACK_WAIT_ATTEMPTS:-30}"
 readonly DTRACK_WAIT_INTERVAL_SECONDS="${DTRACK_WAIT_INTERVAL_SECONDS:-5}"
+readonly DTRACK_PARALLELISM="${DTRACK_PARALLELISM:-3}"
 
 : "${DTRACK_URL:?DTRACK_URL must be defined in the dependency-track CircleCI context}"
 : "${DTRACK_API_KEY:?DTRACK_API_KEY must be defined in the dependency-track CircleCI context}"
@@ -25,6 +26,13 @@ error_for_service() {
   local message="$2"
 
   printf 'ERROR [%s]: %s\n' "$service" "$message" >&2
+}
+
+validate_parallelism() {
+  [[ "$DTRACK_PARALLELISM" =~ ^[1-4]$ ]] || {
+    echo "DTRACK_PARALLELISM must be an integer from 1 to 4; got: ${DTRACK_PARALLELISM}" >&2
+    exit 1
+  }
 }
 
 dtrack_get() {
@@ -236,7 +244,7 @@ record_upload_summary() {
   local service="$1"
   local image="$2"
   local sbom_file="$3"
-  local summary_file="${DTRACK_REPORT_ROOT}/upload-summary.jsonl"
+  local summary_file="$4"
 
   jq -n \
     --arg service "$service" \
@@ -254,25 +262,115 @@ record_upload_summary() {
       isLatest: true,
       uploadAccepted: true,
       tokenReturned: true
-    }' >> "$summary_file"
+    }' > "$summary_file"
+}
+
+publish_service_sbom() {
+  local service="$1"
+  local image
+  local sbom_file
+  local service_report_dir
+  local response_file
+  local summary_file
+
+  image="${IMAGE_REPOSITORY_PREFIX}/${service}:${IMAGE_TAG}"
+  sbom_file="$(sbom_file_for_service "$service")"
+  service_report_dir="${DTRACK_REPORT_ROOT}/${service}"
+  response_file="${service_report_dir}/upload-response.json"
+  summary_file="${service_report_dir}/upload-summary.json"
+
+  mkdir -p "$service_report_dir"
+  rm -f -- "$response_file" "$summary_file"
+
+  generate_sbom "$service" "$image" "$sbom_file"
+  validate_sbom "$service" "$image" "$sbom_file"
+  upload_sbom "$service" "$sbom_file" "$response_file"
+  record_upload_summary "$service" "$image" "$sbom_file" "$summary_file"
+}
+
+wait_for_publish_batch() {
+  local batch_failed=0
+  local index
+  local pid
+  local service
+
+  for index in "${!publish_pids[@]}"; do
+    pid="${publish_pids[$index]}"
+    service="${publish_services[$index]}"
+    if wait "$pid"; then
+      printf 'Dependency-Track SBOM publication completed for %s.\n' "$service"
+    else
+      error_for_service "$service" "SBOM generation or Dependency-Track upload failed"
+      batch_failed=1
+    fi
+  done
+
+  publish_pids=()
+  publish_services=()
+  return "$batch_failed"
+}
+
+cleanup_publish_jobs() {
+  local pid
+
+  for pid in "${publish_pids[@]:-}"; do
+    [[ -n "$pid" ]] || continue
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
+
+  publish_pids=()
+  publish_services=()
+}
+
+merge_upload_summaries() {
+  local service
+  local summary_file
+  local aggregate_summary="${DTRACK_REPORT_ROOT}/upload-summary.jsonl"
+
+  : > "$aggregate_summary"
+  for service in "${APP_SERVICES[@]}"; do
+    summary_file="${DTRACK_REPORT_ROOT}/${service}/upload-summary.json"
+    [[ -s "$summary_file" ]] || {
+      error_for_service "$service" "missing per-service upload summary: ${summary_file}"
+      return 1
+    }
+    jq -c . "$summary_file" >> "$aggregate_summary"
+  done
 }
 
 mkdir -p "$SBOM_REPORT_ROOT" "$DTRACK_REPORT_ROOT"
 : > "${DTRACK_REPORT_ROOT}/upload-summary.jsonl"
 
+validate_parallelism
 wait_for_dependency_track
 validate_parent_project
 prepare_syft
 
+declare -a publish_pids=()
+declare -a publish_services=()
+publish_failed=0
+trap cleanup_publish_jobs EXIT
+
 for service in "${APP_SERVICES[@]}"; do
-  image="${IMAGE_REPOSITORY_PREFIX}/${service}:${IMAGE_TAG}"
-  sbom_file="$(sbom_file_for_service "$service")"
-  response_file="$(mktemp)"
+  publish_service_sbom "$service" &
+  publish_pids+=("$!")
+  publish_services+=("$service")
 
-  generate_sbom "$service" "$image" "$sbom_file"
-  validate_sbom "$service" "$image" "$sbom_file"
-  upload_sbom "$service" "$sbom_file" "$response_file"
-  record_upload_summary "$service" "$image" "$sbom_file"
-
-  rm -f "$response_file"
+  if (( ${#publish_pids[@]} >= DTRACK_PARALLELISM )); then
+    wait_for_publish_batch || publish_failed=1
+  fi
 done
+
+if (( ${#publish_pids[@]} > 0 )); then
+  wait_for_publish_batch || publish_failed=1
+fi
+
+if (( publish_failed )); then
+  echo "One or more Dependency-Track SBOM publications failed." >&2
+  exit 1
+fi
+
+merge_upload_summaries

@@ -417,6 +417,27 @@ jobs:
           path: reports
           destination: dast-scan
 
+  container-integration-dast:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - load-candidate-images
+      - run:
+          name: Start one qualified stack, run integration checks, then OWASP ZAP DAST
+          command: bash .circleci/scripts/run-container-integration-and-dast.sh
+      - send-security-alert-on-failure:
+          scanner: Container integration and OWASP ZAP DAST
+          reports: reports
+      - store_artifacts:
+          when: always
+          path: reports
+          destination: container-integration-dast
+
   qualify-database-migrations-image:
     machine:
       image: ubuntu-2404:current
@@ -494,6 +515,21 @@ jobs:
           command: |
             export IMAGE_TAG='build-<< pipeline.number >>'
             bash .circleci/scripts/deploy-aca.sh plan
+
+  aca-preflight:
+    docker:
+      - image: cimg/azure:2025.01.1@sha256:c1a7a3997721cbcd4dd55e249e59c07e8cf94afb5c4ed263c8c536ddc34b2648
+    environment:
+      TF_IN_AUTOMATION: "true"
+    working_directory: ~/project
+    steps:
+      - checkout
+      - install-aca-deployment-tools
+      - run:
+          name: Validate ACA OIDC, Azure, ACR, and Terraform backend access without changes
+          command: |
+            export IMAGE_TAG='build-<< pipeline.number >>'
+            bash .circleci/scripts/aca-preflight.sh
 
   deploy-aca:
     docker:
@@ -579,24 +615,31 @@ workflows:
             - security-alerts
           requires:
             - image-trivy-scan
-      # Stage 6: Compose starts those images and validates the runtime integration.
-      - container-integration:
-          requires:
-            - dependency-track-sbom-publish
-      # Stage 7: a fresh stack from the same images is assessed with OWASP ZAP.
-      - dast-scan:
+      # Stage 6: one Compose stack validates runtime integration, then OWASP ZAP
+      # scans the same qualified stack to avoid a second Docker load/startup.
+      - container-integration-dast:
           context:
             - security-alerts
             - DAST
           requires:
-            - container-integration
-      # Stage 8: only master publishes images that passed every preceding gate.
+            - dependency-track-sbom-publish
+      # Stage 7: only master publishes images that passed every preceding gate.
       - release-acr:
           context:
             - acr-publish
           requires:
-            - dast-scan
+            - container-integration-dast
             - qualify-database-migrations-image
+          filters:
+            branches:
+              only: master
+      # Stage 8: verify ACA credentials and read-only Azure/Terraform access
+      # before calculating a release plan.
+      - aca-preflight:
+          context:
+            - aca-deploy
+          requires:
+            - release-acr
           filters:
             branches:
               only: master
@@ -605,14 +648,14 @@ workflows:
           context:
             - aca-deploy
           requires:
-            - release-acr
+            - aca-preflight
           filters:
             branches:
               only: master
       - hold-aca-deployment:
           type: approval
           requires:
-            - release-acr
+            - aca-preflight
             - plan-aca
           filters:
             branches:

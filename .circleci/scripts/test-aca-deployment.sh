@@ -13,6 +13,7 @@ readonly DATA_OUTPUTS="${REPOSITORY_ROOT}/ACA/modules/data/outputs.tf"
 readonly DATA_MAIN="${REPOSITORY_ROOT}/ACA/modules/data/main.tf"
 readonly APP_LOCALS="${REPOSITORY_ROOT}/ACA/modules/apps/locals.tf"
 readonly OIDC_AUDIT="${REPOSITORY_ROOT}/.circleci/scripts/azure-oidc-audit.sh"
+readonly ACA_PREFLIGHT="${REPOSITORY_ROOT}/.circleci/scripts/aca-preflight.sh"
 
 # The suite deliberately replaces sourced functions with local Azure/Terraform mocks.
 # shellcheck disable=SC2317
@@ -271,8 +272,27 @@ test_oidc_audit_read_only() {
 test_circleci_serial_gate() {
   grep -q 'serial-group: << pipeline.project.slug >>/aca-production-deployment' "$CONTINUE_CONFIG"
   grep -A8 -- '- hold-aca-deployment:' "$CONTINUE_CONFIG" | grep -q -- '- plan-aca'
-  grep -A8 -- '- hold-aca-deployment:' "$CONTINUE_CONFIG" | grep -q -- '- release-acr'
+  grep -A8 -- '- hold-aca-deployment:' "$CONTINUE_CONFIG" | grep -q -- '- aca-preflight'
+  grep -A8 -- '- aca-preflight:' "$CONTINUE_CONFIG" | grep -q -- '- release-acr'
   if grep -A8 -- '- hold-aca-deployment:' "$CONTINUE_CONFIG" | grep -q 'context:'; then return 1; fi
+}
+
+test_terraform_apply_uses_saved_plan_without_automatic_approval_flag() {
+  grep -q 'terraform -chdir="$ACA_TERRAFORM_DIRECTORY" apply \\' "$DEPLOY_SCRIPT"
+  if grep -q -- 'apply -auto''-approve' "$DEPLOY_SCRIPT"; then return 1; fi
+}
+
+test_aca_preflight_read_only_and_gated() {
+  grep -q 'aca_authenticate_with_circleci_oidc' "$ACA_PREFLIGHT"
+  grep -q 'az acr repository list' "$ACA_PREFLIGHT"
+  grep -q 'az storage blob show' "$ACA_PREFLIGHT"
+  grep -q 'terraform -chdir="$ACA_TERRAFORM_DIRECTORY" state list' "$ACA_PREFLIGHT"
+  grep -A8 -- '- plan-aca:' "$CONTINUE_CONFIG" | grep -q -- '- aca-preflight'
+  grep -A8 -- '- aca-preflight:' "$CONTINUE_CONFIG" | grep -q -- '- release-acr'
+  if grep -Eq 'terraform .* (apply|destroy)|storage blob (upload|delete|update|sync)|az containerapp (update|delete|create)' \
+    "$ACA_PREFLIGHT"; then
+    return 1
+  fi
 }
 
 test_circleci_environment_cli_capability() {
@@ -367,6 +387,8 @@ assert_succeeds "sensitive plan value is absent from summary" test_plan_sensitiv
 assert_succeeds "Cosmos URI is derived, injected, sensitive, and not context-driven" test_cosmos_derivation
 assert_succeeds "OIDC state audit is read-only and does not infer write" test_oidc_audit_read_only
 assert_succeeds "CircleCI approval and stable serial group block concurrent deployment" test_circleci_serial_gate
+assert_succeeds "Terraform applies saved plans without automatic approval flag" test_terraform_apply_uses_saved_plan_without_automatic_approval_flag
+assert_succeeds "ACA preflight is read-only and gates plan-aca" test_aca_preflight_read_only_and_gated
 assert_succeeds "CircleCI environment CLI exposes custom-audience OIDC" test_circleci_environment_cli_capability
 assert_fails "CircleCI Local CLI is rejected for ACA OIDC" test_circleci_local_cli_rejected
 assert_succeeds "CircleCI environment CLI is never overwritten" test_circleci_environment_cli_not_overwritten
