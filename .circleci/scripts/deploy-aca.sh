@@ -290,22 +290,59 @@ digest_from_image_reference() {
   exit 1
 }
 
+parse_exact_required_tsv_lines() {
+  local expected_count="$1" tsv_output="$2" destination_name="$3" value
+  local -n destination="$destination_name"
+  destination=()
+  [[ -n "$tsv_output" ]] || return 1
+  mapfile -t destination <<<"$tsv_output"
+  (( ${#destination[@]} == expected_count )) || return 1
+  for value in "${destination[@]}"; do
+    [[ -n "$value" && "$value" != "null" ]] || return 1
+  done
+}
+
 load_current_healthy_release() {
   local application latest_revision ready_revision health_state provisioning_state image_reference
+  local revision_names_output revision_details_output
+  local -a revision_names=() revision_details=()
   for application in "${ACA_APPLICATIONS[@]}"; do
-    read -r latest_revision ready_revision < <(az containerapp show \
+    if ! revision_names_output="$(az containerapp show \
       --name "$application" --resource-group "$ACA_RESOURCE_GROUP_NAME" \
       --query '[properties.latestRevisionName, properties.latestReadyRevisionName]' \
-      --output tsv --only-show-errors)
+      --output tsv --only-show-errors)"; then
+      printf 'Unable to read revision names for application %s; redeployment refused.\n' \
+        "$application" >&2
+      exit 1
+    fi
+    if ! parse_exact_required_tsv_lines 2 "$revision_names_output" revision_names; then
+      printf 'Azure returned malformed revision names for application %s; redeployment refused.\n' \
+        "$application" >&2
+      exit 1
+    fi
+    latest_revision="${revision_names[0]}"
+    ready_revision="${revision_names[1]}"
     [[ -n "$latest_revision" && "$latest_revision" == "$ready_revision" ]] || {
       printf 'Application %s has no healthy latest ready revision; redeployment refused.\n' "$application" >&2
       exit 1
     }
-    read -r health_state provisioning_state image_reference < <(az containerapp revision show \
+    if ! revision_details_output="$(az containerapp revision show \
       --name "$application" --resource-group "$ACA_RESOURCE_GROUP_NAME" \
       --revision "$latest_revision" \
       --query '[properties.healthState, properties.provisioningState, properties.template.containers[0].image]' \
-      --output tsv --only-show-errors)
+      --output tsv --only-show-errors)"; then
+      printf 'Unable to read latest revision details for application %s; redeployment refused.\n' \
+        "$application" >&2
+      exit 1
+    fi
+    if ! parse_exact_required_tsv_lines 3 "$revision_details_output" revision_details; then
+      printf 'Azure returned malformed latest revision details for application %s; redeployment refused.\n' \
+        "$application" >&2
+      exit 1
+    fi
+    health_state="${revision_details[0]}"
+    provisioning_state="${revision_details[1]}"
+    image_reference="${revision_details[2]}"
     [[ "$health_state" == "Healthy" && "$provisioning_state" == "Provisioned" ]] || {
       printf 'Application %s latest revision is not healthy; redeployment refused.\n' "$application" >&2
       exit 1
@@ -482,6 +519,8 @@ latest_revision_name() {
 wait_for_healthy_revision() {
   local application="$1" expected_revision="$2"
   local ready_revision health_state provisioning_state started_at elapsed_seconds
+  local revision_details_output
+  local -a revision_details=()
   [[ -n "$expected_revision" && "$expected_revision" != "null" ]] || {
     printf 'Azure did not return the expected revision for %s.\n' "$application" >&2
     exit 1
@@ -492,10 +531,16 @@ wait_for_healthy_revision() {
     ready_revision="$(az containerapp show --name "$application" \
       --resource-group "$ACA_RESOURCE_GROUP_NAME" --query properties.latestReadyRevisionName \
       --output tsv --only-show-errors 2>/dev/null || true)"
-    read -r health_state provisioning_state < <(az containerapp revision show \
+    health_state=""
+    provisioning_state=""
+    revision_details_output="$(az containerapp revision show \
       --name "$application" --resource-group "$ACA_RESOURCE_GROUP_NAME" \
       --revision "$expected_revision" --query '[properties.healthState, properties.provisioningState]' \
-      --output tsv --only-show-errors 2>/dev/null || true)
+      --output tsv --only-show-errors 2>/dev/null || true)"
+    if parse_exact_required_tsv_lines 2 "$revision_details_output" revision_details; then
+      health_state="${revision_details[0]}"
+      provisioning_state="${revision_details[1]}"
+    fi
     if [[ "$ready_revision" == "$expected_revision" && "$health_state" == "Healthy" && \
       "$provisioning_state" == "Provisioned" ]]; then
       DEPLOYED_REVISIONS["$application"]="$expected_revision"
