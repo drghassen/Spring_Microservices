@@ -4,6 +4,7 @@ resource "azurerm_container_app" "this" {
   name                         = each.key
   resource_group_name          = var.resource_group_name
   container_app_environment_id = var.container_app_environment_id
+  workload_profile_name        = "Consumption"
   revision_mode                = "Single"
   tags                         = var.tags
 
@@ -111,6 +112,7 @@ resource "azurerm_container_app_job" "database_migrations" {
   location                     = var.location
   resource_group_name          = var.resource_group_name
   container_app_environment_id = var.container_app_environment_id
+  workload_profile_name        = "Consumption"
   replica_timeout_in_seconds   = 600
   replica_retry_limit          = 0
   tags                         = var.tags
