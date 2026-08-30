@@ -120,6 +120,7 @@ validate_parent_project() {
 
 syft() {
   docker run --rm \
+    -e SYFT_CHECK_FOR_APP_UPDATE=false \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v "$PWD/reports:/reports" \
     "$SYFT_IMAGE" "$@"
@@ -341,7 +342,78 @@ merge_upload_summaries() {
   done
 }
 
-mkdir -p "$SBOM_REPORT_ROOT" "$DTRACK_REPORT_ROOT"
+reset_report_roots() {
+  [[ "$SBOM_REPORT_ROOT" == "reports/sbom-reports" && \
+    "$DTRACK_REPORT_ROOT" == "reports/dependency-track" ]] || {
+    echo "Refusing to clean unexpected report roots." >&2
+    exit 1
+  }
+
+  rm -rf -- "$SBOM_REPORT_ROOT" "$DTRACK_REPORT_ROOT"
+  mkdir -p "$SBOM_REPORT_ROOT" "$DTRACK_REPORT_ROOT"
+}
+
+validate_current_outputs() {
+  local expected_files
+  local actual_files
+  local aggregate_summary="${DTRACK_REPORT_ROOT}/upload-summary.jsonl"
+  local service
+  local sbom_file
+  local sbom_file_count
+  local upload_count
+
+  expected_files="$(mktemp)"
+  actual_files="$(mktemp)"
+
+  for service in "${APP_SERVICES[@]}"; do
+    sbom_file="$(sbom_file_for_service "$service")"
+    printf '%s\n' "$sbom_file" >> "$expected_files"
+  done
+  LC_ALL=C sort -o "$expected_files" "$expected_files"
+
+  find "$SBOM_REPORT_ROOT" -type f -name '*.cdx.json' -print \
+    | LC_ALL=C sort > "$actual_files"
+
+  if ! diff -u "$expected_files" "$actual_files"; then
+    rm -f -- "$expected_files" "$actual_files"
+    echo "SBOM report set contains missing or stale files for IMAGE_TAG=${IMAGE_TAG}." >&2
+    return 1
+  fi
+
+  sbom_file_count="$(wc -l < "$actual_files")"
+  upload_count="$(jq -s 'length' "$aggregate_summary")"
+  if [[ "$upload_count" != "${#APP_SERVICES[@]}" ]]; then
+    rm -f -- "$expected_files" "$actual_files"
+    echo "Expected ${#APP_SERVICES[@]} Dependency-Track summaries, got ${upload_count}." >&2
+    return 1
+  fi
+
+  jq -s -e --arg imageTag "$IMAGE_TAG" --argjson expected "${#APP_SERVICES[@]}" '
+    map(
+      select(
+          .imageTag == $imageTag
+          and .autoCreate == true
+          and .isLatest == true
+          and .uploadAccepted == true
+          and .tokenReturned == true
+        )
+    ) | length == $expected
+  ' "$aggregate_summary" >/dev/null || {
+    rm -f -- "$expected_files" "$actual_files"
+    echo "Dependency-Track summary validation failed for IMAGE_TAG=${IMAGE_TAG}." >&2
+    return 1
+  }
+
+  rm -f -- "$expected_files" "$actual_files"
+
+  printf 'Validated current outputs: imageTag=%s expectedServices=%s sbomFiles=%s uploadSummaries=%s\n' \
+    "$IMAGE_TAG" "${#APP_SERVICES[@]}" "$sbom_file_count" "$upload_count"
+  du -sh "$SBOM_REPORT_ROOT" "$DTRACK_REPORT_ROOT"
+  find "$SBOM_REPORT_ROOT" -type f -name '*.cdx.json' -printf '%s %p\n' \
+    | LC_ALL=C sort -nr
+}
+
+reset_report_roots
 : > "${DTRACK_REPORT_ROOT}/upload-summary.jsonl"
 
 validate_parallelism
@@ -374,3 +446,4 @@ if (( publish_failed )); then
 fi
 
 merge_upload_summaries
+validate_current_outputs

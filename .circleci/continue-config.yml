@@ -360,6 +360,24 @@ jobs:
       - checkout
       - attach_workspace:
           at: .
+      - run:
+          name: Report attached workspace sizes
+          command: |
+            set -euo pipefail
+
+            for workspace_path in \
+              ci-image-archives/frontend \
+              ci-image-archives/backend \
+              ci-maven-repository \
+              ci-backend-sonar \
+              ci-frontend-sonar; do
+              if [[ -e "$workspace_path" ]]; then
+                du -sh "$workspace_path"
+              else
+                printf 'Workspace path absent: %s\n' "$workspace_path"
+              fi
+            done
+            find ci-image-archives -type f -printf '%s %p\n' 2>/dev/null | sort -nr || true
       - load-candidate-images
       - run:
           name: Generate CycloneDX 1.6 SBOMs and publish to Dependency-Track
