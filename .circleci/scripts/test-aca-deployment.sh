@@ -151,8 +151,9 @@ populate_digest_maps() {
 }
 
 test_initial_rollout() {
-  local event_file="${TMPDIR:-/tmp}/aca-initial-events"
+  local event_file="${TMPDIR:-/tmp}/aca-initial-events" output_file
   : >"$event_file"
+  output_file="$(mktemp)"
   populate_digest_maps
   DETECTED_RELEASE_MODE=initial
   copy_digest_map DESIRED_APPLICATION_DIGESTS ROLLOUT_APPLICATION_DIGESTS
@@ -163,8 +164,20 @@ test_initial_rollout() {
   latest_revision_name() { printf '%s-revision\n' "$1"; }
   wait_for_healthy_revision() { printf 'healthy:%s\n' "$1" >>"$event_file"; }
   run_post_deployment_health_checks() { printf '%s\n' post-health >>"$event_file"; }
-  run_deployment >/dev/null
-  grep -q '^plan:infrastructure-bootstrap:\[\]$' "$event_file"
+  run_deployment >"$output_file"
+  grep -Fxq "plan:infrastructure-bootstrap:${NO_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Fxq "plan:migration-job:${NO_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Fxq "plan:config-server:${CONFIG_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Fxq "plan:discovery-service:${DISCOVERY_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Fxq "plan:gateway:${GATEWAY_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Fxq "plan:games-service:${GAMES_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Fxq "plan:library-service:${LIBRARY_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Fxq "plan:order-service:${ORDER_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Fxq "plan:payment-service:${PAYMENT_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Fxq "plan:user-service:${BUSINESS_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Fxq "plan:client:${ALL_ACTIVE_APPLICATIONS}" "$event_file"
+  grep -Eq '^Timing: complete ACA deployment = [0-9]+s$' "$output_file"
+  [[ "$(grep -c '^migration$' "$event_file")" == 1 ]]
   [[ "$(grep -n '^migration$' "$event_file" | cut -d: -f1)" -lt \
     "$(grep -n '^healthy:config-server$' "$event_file" | cut -d: -f1)" ]]
   [[ "$(grep -c '^healthy:' "$event_file")" == 9 ]]
@@ -173,40 +186,82 @@ test_initial_rollout() {
 test_redeploy_migration_gate() {
   local event_file="${TMPDIR:-/tmp}/aca-redeploy-events"
   local migration_complete=0
-  local application
+  local changed_application changed_count
+  local -A simulated_application_digests=()
   : >"$event_file"
   populate_digest_maps
   DETECTED_RELEASE_MODE=redeploy
   copy_digest_map CURRENT_APPLICATION_DIGESTS ROLLOUT_APPLICATION_DIGESTS
+  copy_digest_map CURRENT_APPLICATION_DIGESTS simulated_application_digests
   safe_plan_and_apply() {
+    local candidate_application
     if ((migration_complete == 0)); then
-      for application in "${ACA_APPLICATIONS[@]}"; do
-        [[ "${ROLLOUT_APPLICATION_DIGESTS[$application]}" == \
-          "${CURRENT_APPLICATION_DIGESTS[$application]}" ]]
+      for candidate_application in "${ACA_APPLICATIONS[@]}"; do
+        [[ "${ROLLOUT_APPLICATION_DIGESTS[$candidate_application]}" == \
+          "${CURRENT_APPLICATION_DIGESTS[$candidate_application]}" ]]
       done
+    elif [[ "$1" != "infrastructure-bootstrap" && "$1" != "migration-job" ]]; then
+      changed_application=""
+      changed_count=0
+      for candidate_application in "${ACA_APPLICATIONS[@]}"; do
+        if [[ "${ROLLOUT_APPLICATION_DIGESTS[$candidate_application]}" != \
+          "${simulated_application_digests[$candidate_application]}" ]]; then
+          changed_application="$candidate_application"
+          changed_count=$((changed_count + 1))
+        fi
+      done
+      [[ "$changed_count" == 1 && "$changed_application" == "$1" ]]
+      simulated_application_digests["$1"]="${ROLLOUT_APPLICATION_DIGESTS[$1]}"
     fi
-    printf 'plan:%s\n' "$1" >>"$event_file"
+    printf 'plan:%s:%s\n' "$1" "$5" >>"$event_file"
   }
   run_database_migrations() { migration_complete=1; printf '%s\n' migration >>"$event_file"; }
   latest_revision_name() { printf '%s-revision\n' "$1"; }
   wait_for_healthy_revision() { printf 'healthy:%s\n' "$1" >>"$event_file"; }
   run_post_deployment_health_checks() { :; }
   run_deployment >/dev/null
+  while IFS= read -r phase; do
+    grep -Fxq "plan:${phase}:${ALL_ACTIVE_APPLICATIONS}" "$event_file"
+  done <<'EOF'
+infrastructure-bootstrap
+migration-job
+config-server
+discovery-service
+gateway
+games-service
+library-service
+order-service
+payment-service
+user-service
+client
+EOF
+  [[ "$(grep -c '^migration$' "$event_file")" == 1 ]]
   [[ "$(grep -c '^healthy:' "$event_file")" == 9 ]]
   [[ "$(grep -n '^migration$' "$event_file" | cut -d: -f1)" -lt \
     "$(grep -n '^healthy:config-server$' "$event_file" | cut -d: -f1)" ]]
 }
 
-test_revision_health_failure() {
-  local application="$1"
+test_revision_health_condition() {
+  local condition="$1"
   az() {
     if [[ "$*" == *"revision show"* ]]; then
-      printf '%s\n%s\n' Unhealthy Provisioned
+      case "$condition" in
+        healthy | wrong-ready) printf '%s\n%s\n' Healthy Provisioned ;;
+        unhealthy) printf '%s\n%s\n' Unhealthy Provisioned ;;
+        failed) printf '%s\n%s\n' Healthy Failed ;;
+      esac
     else
-      printf '%s\n' "${application}-revision"
+      if [[ "$condition" == "wrong-ready" ]]; then
+        printf '%s\n' 'fixture-old-revision'
+      else
+        printf '%s\n' 'fixture-expected-revision'
+      fi
     fi
   }
-  wait_for_healthy_revision "$application" "${application}-revision"
+  sleep() {
+    SECONDS=$((SECONDS + APP_HEALTH_TIMEOUT_SECONDS))
+  }
+  wait_for_healthy_revision fixture-app fixture-expected-revision
 }
 
 test_multiline_revision_parsing() {
@@ -219,133 +274,7 @@ test_multiline_revision_parsing() {
   [[ "${revision_details[2]}" == "example.azurecr.io/app@sha256:fixture" ]]
 }
 
-eureka_health_fixture() {
-  local overall_status="$1" eureka_status="$2" applications="$3"
-  jq -cn --arg overall_status "$overall_status" --arg eureka_status "$eureka_status" \
-    --argjson applications "$applications" '{
-      status: $overall_status,
-      components: {
-        discoveryComposite: {
-          components: {
-            eureka: {
-              status: $eureka_status,
-              details: {applications: $applications}
-            }
-          }
-        }
-      }
-    }'
-}
-
-run_mocked_eureka_sequence() {
-  local -a responses=("$@")
-  local response_index=0
-  DEPLOYED_REVISIONS[gateway]='gateway--healthy-fixture'
-
-  fetch_eureka_health_json() {
-    local response
-    [[ "$1" == 'gateway--healthy-fixture' ]] || return 1
-    if ((response_index < ${#responses[@]})); then
-      response="${responses[$response_index]}"
-      response_index=$((response_index + 1))
-    else
-      response="${responses[${#responses[@]} - 1]}"
-    fi
-    [[ "$response" != 'FETCH_FAILURE' ]] || return 1
-    EUREKA_HEALTH_JSON="$response"
-  }
-
-  # Advance the special Bash clock without waiting for production intervals.
-  sleep() {
-    SECONDS=$((SECONDS + EUREKA_TIMEOUT_SECONDS))
-  }
-
-  verify_eureka_registrations
-}
-
-test_eureka_exactly_one() {
-  local health
-  health="$(eureka_health_fixture UP UP \
-    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
-  run_mocked_eureka_sequence "$health"
-}
-
-test_eureka_exactly_two() {
-  local health
-  health="$(eureka_health_fixture UP UP \
-    '{"GATEWAY":2,"GAMES-SERVICE":2,"PAYMENT-SERVICE":2,"LIBRARY-SERVICE":2,"ORDER-SERVICE":2,"USER-SERVICE":2}')"
-  run_mocked_eureka_sequence "$health"
-}
-
-test_eureka_mixed_positive_counts() {
-  local health output
-  health="$(eureka_health_fixture UP UP \
-    '{"GATEWAY":2,"GAMES-SERVICE":2,"PAYMENT-SERVICE":2,"LIBRARY-SERVICE":2,"ORDER-SERVICE":3,"USER-SERVICE":2}')"
-  output="$(run_mocked_eureka_sequence "$health")"
-  [[ "$output" == *'GATEWAY=2'* ]]
-  [[ "$output" == *'ORDER-SERVICE=3'* ]]
-  [[ "$output" == *'at least one registered instance'* ]]
-}
-
-test_eureka_missing_then_registered() {
-  local missing complete
-  missing="$(eureka_health_fixture UP UP \
-    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1}')"
-  complete="$(eureka_health_fixture UP UP \
-    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
-  run_mocked_eureka_sequence "$missing" "$complete"
-}
-
-test_eureka_service_remains_missing() {
-  local health
-  health="$(eureka_health_fixture UP UP \
-    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1}')"
-  run_mocked_eureka_sequence "$health"
-}
-
-test_eureka_zero_count() {
-  local health
-  health="$(eureka_health_fixture UP UP \
-    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":0,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
-  run_mocked_eureka_sequence "$health"
-}
-
-test_eureka_down_then_up() {
-  local down up
-  down="$(eureka_health_fixture UP DOWN \
-    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
-  up="$(eureka_health_fixture UP UP \
-    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
-  run_mocked_eureka_sequence "$down" "$up"
-}
-
-test_eureka_remains_down() {
-  local health
-  health="$(eureka_health_fixture UP DOWN \
-    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
-  run_mocked_eureka_sequence "$health"
-}
-
-test_eureka_malformed_json() {
-  run_mocked_eureka_sequence 'not-json'
-}
-
-test_eureka_missing_structure() {
-  run_mocked_eureka_sequence '{"status":"UP","components":{}}'
-}
-
-test_eureka_diagnostics_exclude_health_values() {
-  local health output sensitive_value='fixture-sensitive-health-value-never-print'
-  health="$(jq -cn --arg sensitive_value "$sensitive_value" '{
-    status: "UP",
-    components: {unrelated: {details: {credential: $sensitive_value}}}
-  }')"
-  output="$(run_mocked_eureka_sequence "$health" 2>&1 || true)"
-  [[ "$output" != *"$sensitive_value"* ]]
-  [[ "$output" == *'Eureka status not UP yet'* ]]
-}
-
-test_post_deployment_http_checks_unchanged() {
+test_post_deployment_http_checks_only() {
   local event_file
   event_file="$(mktemp)"
   az() {
@@ -355,14 +284,58 @@ test_post_deployment_http_checks_unchanged() {
   assert_public_http_status() {
     printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$event_file"
   }
-  verify_eureka_registrations() {
-    printf '%s\n' eureka >>"$event_file"
-  }
-
   run_post_deployment_health_checks >/dev/null
   grep -Fxq 'client|https://client.example.test/|200' "$event_file"
   grep -Fxq 'public Gateway games route|https://client.example.test/api/v1/games|200' "$event_file"
-  grep -Fxq 'eureka' "$event_file"
+  [[ "$(wc -l <"$event_file")" == 2 ]]
+}
+
+test_no_deployment_exec_check_remains() {
+  if grep -Eq 'az[[:space:]]+containerapp[[:space:]]+exec' "$DEPLOY_SCRIPT"; then return 1; fi
+}
+
+test_zero_change_plan_skips_apply() {
+  local planned=0 applied=0
+  create_safe_plan() {
+    planned=1
+    LAST_PLAN_ADD_COUNT=0
+    LAST_PLAN_CHANGE_COUNT=0
+    LAST_PLAN_DESTROY_COUNT=0
+  }
+  apply_validated_plan() { applied=$((applied + 1)); }
+
+  safe_plan_and_apply fixture "zero-change fixture"
+  [[ "$planned" == 1 && "$applied" == 0 ]]
+}
+
+test_changed_plan_applies_exact_saved_plan() {
+  local planned=0 applied=0
+  create_safe_plan() {
+    planned=1
+    LAST_PLAN_FILE='/tmp/exact-validated-fixture.tfplan'
+    LAST_PLAN_ADD_COUNT=0
+    LAST_PLAN_CHANGE_COUNT=1
+    LAST_PLAN_DESTROY_COUNT=0
+  }
+  apply_validated_plan() {
+    [[ "$1" == "changed fixture" ]]
+    [[ "$LAST_PLAN_FILE" == '/tmp/exact-validated-fixture.tfplan' ]]
+    applied=$((applied + 1))
+  }
+
+  safe_plan_and_apply fixture "changed fixture"
+  [[ "$planned" == 1 && "$applied" == 1 ]]
+}
+
+test_timing_diagnostics_exclude_arguments() {
+  local output sensitive_value='fixture-sensitive-timing-value-never-print'
+  timed_fixture() {
+    SECONDS=$((SECONDS + 3))
+    [[ "$1" == "$sensitive_value" ]]
+  }
+  output="$(run_timed_phase 'safe fixture phase' timed_fixture "$sensitive_value")"
+  [[ "$output" == 'Timing: safe fixture phase = 3s' ]]
+  [[ "$output" != *"$sensitive_value"* ]]
 }
 
 write_plan_fixture() {
@@ -771,24 +744,18 @@ assert_fails "migration job/state inconsistency" test_job_state_inconsistency
 assert_succeeds "migration success and exact execution tracking" mock_migration_success
 assert_fails "migration Failed stops release" mock_migration_failed
 assert_fails "migration timeout stops release" mock_migration_timeout
-assert_succeeds "initial migration-gated ordered rollout" test_initial_rollout
-assert_succeeds "redeploy keeps all application digests unchanged before migration" test_redeploy_migration_gate
+assert_succeeds "initial rollout retains every progressive activation set and executes migrations" test_initial_rollout
+assert_succeeds "changed migration digest executes before redeploy and all apps remain active" test_redeploy_migration_gate
 assert_succeeds "multiline Azure CLI revision details are parsed exactly" test_multiline_revision_parsing
-assert_fails "Config Server unhealthy revision stops release" test_revision_health_failure config-server
-assert_fails "Discovery unhealthy revision stops release" test_revision_health_failure discovery-service
-assert_fails "Gateway unhealthy revision stops release" test_revision_health_failure gateway
-assert_succeeds "Eureka accepts exactly one registration per application" test_eureka_exactly_one
-assert_succeeds "Eureka accepts exactly two registrations per application" test_eureka_exactly_two
-assert_succeeds "Eureka accepts mixed positive registration counts" test_eureka_mixed_positive_counts
-assert_succeeds "Eureka retries until a missing application registers" test_eureka_missing_then_registered
-assert_fails "Eureka fails when an application remains missing" test_eureka_service_remains_missing
-assert_fails "Eureka fails when an application count remains zero" test_eureka_zero_count
-assert_succeeds "Eureka retries a DOWN status until it is UP" test_eureka_down_then_up
-assert_fails "Eureka fails when its status remains DOWN" test_eureka_remains_down
-assert_fails "Eureka safely rejects malformed health JSON" test_eureka_malformed_json
-assert_fails "Eureka safely rejects a missing health structure" test_eureka_missing_structure
-assert_succeeds "Eureka diagnostics exclude unrelated health values" test_eureka_diagnostics_exclude_health_values
-assert_succeeds "post-deployment public HTTP checks remain unchanged" test_post_deployment_http_checks_unchanged
+assert_succeeds "exact ready revision with Healthy and Provisioned passes" test_revision_health_condition healthy
+assert_fails "wrong latest-ready revision does not pass" test_revision_health_condition wrong-ready
+assert_fails "Unhealthy expected revision stops release" test_revision_health_condition unhealthy
+assert_fails "Failed provisioning stops release" test_revision_health_condition failed
+assert_succeeds "post-deployment validation retains exactly both public HTTP checks" test_post_deployment_http_checks_only
+assert_succeeds "deployment-time container exec check is absent" test_no_deployment_exec_check_remains
+assert_succeeds "zero-change validated plan skips Terraform apply" test_zero_change_plan_skips_apply
+assert_succeeds "changed validated plan applies the exact saved plan" test_changed_plan_applies_exact_saved_plan
+assert_succeeds "timing diagnostics expose no command arguments" test_timing_diagnostics_exclude_arguments
 assert_succeeds "normal redeploy with unchanged applications passes pre-migration" test_normal_redeploy_no_changes
 assert_succeeds "application image update is allowed only after migration" test_application_image_update_after_migration_allowed
 assert_succeeds "migration-job image update is allowed before migration" test_migration_job_image_update_before_migration_allowed

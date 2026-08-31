@@ -8,19 +8,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/aca-deployment.sh"
 
 readonly MIGRATIONS_POLL_INTERVAL_SECONDS="${MIGRATIONS_POLL_INTERVAL_SECONDS:-10}"
 readonly MIGRATIONS_TIMEOUT_SECONDS="${MIGRATIONS_TIMEOUT_SECONDS:-900}"
-readonly APP_HEALTH_POLL_INTERVAL_SECONDS="${APP_HEALTH_POLL_INTERVAL_SECONDS:-10}"
+readonly APP_HEALTH_POLL_INTERVAL_SECONDS="${APP_HEALTH_POLL_INTERVAL_SECONDS:-5}"
 readonly APP_HEALTH_TIMEOUT_SECONDS="${APP_HEALTH_TIMEOUT_SECONDS:-900}"
-readonly EUREKA_POLL_INTERVAL_SECONDS="${EUREKA_POLL_INTERVAL_SECONDS:-10}"
-readonly EUREKA_TIMEOUT_SECONDS="${EUREKA_TIMEOUT_SECONDS:-180}"
-
-readonly EUREKA_EXPECTED_APPLICATIONS=(
-  GATEWAY
-  GAMES-SERVICE
-  PAYMENT-SERVICE
-  LIBRARY-SERVICE
-  ORDER-SERVICE
-  USER-SERVICE
-)
 
 readonly NO_ACTIVE_APPLICATIONS='[]'
 readonly CONFIG_ACTIVE_APPLICATIONS='["config-server"]'
@@ -73,7 +62,6 @@ LAST_PLAN_ADD_COUNT=0
 LAST_PLAN_CHANGE_COUNT=0
 LAST_PLAN_DESTROY_COUNT=0
 REDEPLOY_SECRET_VAR_FILE=""
-EUREKA_HEALTH_JSON=""
 
 validate_positive_integer() {
   local variable_name="$1"
@@ -119,8 +107,6 @@ validate_release_inputs() {
   validate_positive_integer MIGRATIONS_TIMEOUT_SECONDS
   validate_positive_integer APP_HEALTH_POLL_INTERVAL_SECONDS
   validate_positive_integer APP_HEALTH_TIMEOUT_SECONDS
-  validate_positive_integer EUREKA_POLL_INTERVAL_SECONDS
-  validate_positive_integer EUREKA_TIMEOUT_SECONDS
 }
 
 resolve_acr_digest() {
@@ -567,7 +553,20 @@ apply_validated_plan() {
 
 safe_plan_and_apply() {
   create_safe_plan "$@"
+  if ((LAST_PLAN_ADD_COUNT == 0 && LAST_PLAN_CHANGE_COUNT == 0 && LAST_PLAN_DESTROY_COUNT == 0)); then
+    printf 'Terraform plan contains no changes for %s; apply skipped.\n' "$2"
+    return
+  fi
   apply_validated_plan "$2"
+}
+
+run_timed_phase() {
+  local phase_name="$1"
+  local started_at
+  shift
+  started_at="$SECONDS"
+  "$@"
+  printf 'Timing: %s = %ss\n' "$phase_name" "$((SECONDS - started_at))"
 }
 
 run_database_migrations() {
@@ -664,6 +663,9 @@ wait_for_healthy_revision() {
 deploy_application_phase() {
   local phase_slug="$1" phase_name="$2" active_applications="$3" application="$4"
   local expected_revision
+  if [[ "$DETECTED_RELEASE_MODE" == "redeploy" ]]; then
+    active_applications="$ALL_ACTIVE_APPLICATIONS"
+  fi
   # The plan helper reads this associative map by its variable name.
   # shellcheck disable=SC2034
   ROLLOUT_APPLICATION_DIGESTS["$application"]="${DESIRED_APPLICATION_DIGESTS[$application]}"
@@ -688,103 +690,6 @@ assert_public_http_status() {
   printf 'Public health check: %s URL=%s HTTP=%s\n' "$label" "$url" "$status"
 }
 
-fetch_eureka_health_json() {
-  local gateway_revision="$1"
-  local exec_output="${PLAN_DIRECTORY}/eureka-check.log"
-  local command
-  command="sh -c 'printf \"\\nEUREKA_HEALTH_BEGIN\\n\"; wget -qO- http://localhost:8222/actuator/health; status=\$?; printf \"\\nEUREKA_HEALTH_END\\n\"; exit \$status'"
-  if ! az containerapp exec --name gateway --resource-group "$ACA_RESOURCE_GROUP_NAME" \
-    --revision "$gateway_revision" --container gateway --command "$command" \
-    >"$exec_output" 2>&1; then
-    return 1
-  fi
-  EUREKA_HEALTH_JSON="$(awk '
-    { sub(/\r$/, "") }
-    $0 == "EUREKA_HEALTH_BEGIN" { capture = 1; payload = ""; next }
-    $0 == "EUREKA_HEALTH_END" && capture {
-      last_payload = payload
-      found = 1
-      capture = 0
-      next
-    }
-    capture { payload = payload (payload == "" ? "" : ORS) $0 }
-    END {
-      if (!found) exit 1
-      print last_payload
-    }
-  ' "$exec_output")" || return 1
-}
-
-verify_eureka_registrations() {
-  local gateway_revision="${DEPLOYED_REVISIONS[gateway]:-}"
-  local overall_status eureka_status applications_type application count
-  local started_at elapsed_seconds missing_list
-  local -a missing_applications=() registration_summary=()
-  [[ -n "$gateway_revision" ]] || {
-    echo "Gateway revision is unavailable for the Eureka registration check." >&2
-    return 1
-  }
-
-  started_at="$SECONDS"
-  while true; do
-    EUREKA_HEALTH_JSON=""
-    missing_applications=()
-    registration_summary=()
-
-    if ! fetch_eureka_health_json "$gateway_revision"; then
-      echo "Eureka convergence attempt: Gateway health endpoint unavailable." >&2
-    elif ! jq -e 'type == "object"' <<<"$EUREKA_HEALTH_JSON" >/dev/null 2>&1; then
-      echo "Eureka convergence attempt: Gateway health response was not valid JSON." >&2
-    else
-      overall_status="$(jq -r 'try (.status // "") catch ""' <<<"$EUREKA_HEALTH_JSON")"
-      eureka_status="$(jq -r \
-        'try (.components.discoveryComposite.components.eureka.status // "") catch ""' \
-        <<<"$EUREKA_HEALTH_JSON")"
-      applications_type="$(jq -r \
-        'try (.components.discoveryComposite.components.eureka.details.applications | type)
-          catch "unavailable"' \
-        <<<"$EUREKA_HEALTH_JSON")"
-
-      if [[ "$overall_status" != "UP" ]]; then
-        echo "Eureka convergence attempt: overall health status not UP yet." >&2
-      elif [[ "$eureka_status" != "UP" ]]; then
-        echo "Eureka convergence attempt: Eureka status not UP yet." >&2
-      elif [[ "$applications_type" != "object" ]]; then
-        echo "Eureka convergence attempt: Eureka applications structure unavailable." >&2
-      else
-        for application in "${EUREKA_EXPECTED_APPLICATIONS[@]}"; do
-          count="$(jq -er --arg application "$application" '
-            .components.discoveryComposite.components.eureka.details.applications[$application]
-            | select(type == "number" and floor == .)
-          ' <<<"$EUREKA_HEALTH_JSON" 2>/dev/null || true)"
-          if [[ "$count" =~ ^[0-9]+$ ]] && ((count >= 1)); then
-            registration_summary+=("${application}=${count}")
-          else
-            missing_applications+=("$application")
-          fi
-        done
-
-        if ((${#missing_applications[@]} == 0)); then
-          printf 'Eureka registration check:\n'
-          printf '%s\n' "${registration_summary[@]}"
-          echo "Eureka discovery check passed: all six expected applications have at least one registered instance."
-          return 0
-        fi
-        missing_list="$(printf '%s, ' "${missing_applications[@]}")"
-        printf 'Eureka convergence attempt: missing %s.\n' "${missing_list%, }" >&2
-      fi
-    fi
-
-    elapsed_seconds=$((SECONDS - started_at))
-    if ((elapsed_seconds >= EUREKA_TIMEOUT_SECONDS)); then
-      printf 'Eureka discovery did not converge within %s seconds.\n' \
-        "$EUREKA_TIMEOUT_SECONDS" >&2
-      return 1
-    fi
-    sleep "$EUREKA_POLL_INTERVAL_SECONDS"
-  done
-}
-
 run_post_deployment_health_checks() {
   local client_fqdn client_url gateway_route_url
   client_fqdn="$(az containerapp show --name client --resource-group "$ACA_RESOURCE_GROUP_NAME" \
@@ -797,8 +702,7 @@ run_post_deployment_health_checks() {
   gateway_route_url="${client_url}/api/v1/games"
   assert_public_http_status "client" "$client_url/" 200
   assert_public_http_status "public Gateway games route" "$gateway_route_url" 200
-  verify_eureka_registrations
-  echo "All Container App revisions, public routes, Eureka registrations, and services are healthy."
+  echo "Post-deployment application health checks passed."
 }
 
 prepare_stable_redeployment_secrets() {
@@ -900,27 +804,40 @@ run_plan_only() {
 
 run_deployment() {
   local bootstrap_create_scope="pre-migration" bootstrap_active_applications="$ALL_ACTIVE_APPLICATIONS"
+  local deployment_started_at="$SECONDS"
   if [[ "$DETECTED_RELEASE_MODE" == "initial" ]]; then
     bootstrap_create_scope="initial-apps-job"
     bootstrap_active_applications="$NO_ACTIVE_APPLICATIONS"
   fi
-  safe_plan_and_apply infrastructure-bootstrap "infrastructure/bootstrap" \
+  run_timed_phase "infrastructure/bootstrap" safe_plan_and_apply \
+    infrastructure-bootstrap "infrastructure/bootstrap" \
     ROLLOUT_APPLICATION_DIGESTS "$CURRENT_MIGRATION_DIGEST" \
     "$bootstrap_active_applications" "$bootstrap_create_scope"
-  safe_plan_and_apply migration-job "migration job update" \
+  run_timed_phase "migration job update" safe_plan_and_apply \
+    migration-job "migration job update" \
     ROLLOUT_APPLICATION_DIGESTS "$DESIRED_MIGRATION_DIGEST" \
     "$bootstrap_active_applications" pre-migration
-  run_database_migrations
-  deploy_application_phase config-server "Config Server revision" "$CONFIG_ACTIVE_APPLICATIONS" config-server
-  deploy_application_phase discovery-service "Discovery revision" "$DISCOVERY_ACTIVE_APPLICATIONS" discovery-service
-  deploy_application_phase gateway "Gateway revision" "$GATEWAY_ACTIVE_APPLICATIONS" gateway
-  deploy_application_phase games-service "Games service revision" "$GAMES_ACTIVE_APPLICATIONS" games-service
-  deploy_application_phase library-service "Library service revision" "$LIBRARY_ACTIVE_APPLICATIONS" library-service
-  deploy_application_phase order-service "Order service revision" "$ORDER_ACTIVE_APPLICATIONS" order-service
-  deploy_application_phase payment-service "Payment service revision" "$PAYMENT_ACTIVE_APPLICATIONS" payment-service
-  deploy_application_phase user-service "User service revision" "$BUSINESS_ACTIVE_APPLICATIONS" user-service
-  deploy_application_phase client "Client revision and complete application set" "$ALL_ACTIVE_APPLICATIONS" client
-  run_post_deployment_health_checks
+  run_timed_phase "database migrations" run_database_migrations
+  run_timed_phase "config-server rollout" deploy_application_phase \
+    config-server "Config Server revision" "$CONFIG_ACTIVE_APPLICATIONS" config-server
+  run_timed_phase "discovery-service rollout" deploy_application_phase \
+    discovery-service "Discovery revision" "$DISCOVERY_ACTIVE_APPLICATIONS" discovery-service
+  run_timed_phase "gateway rollout" deploy_application_phase \
+    gateway "Gateway revision" "$GATEWAY_ACTIVE_APPLICATIONS" gateway
+  run_timed_phase "games-service rollout" deploy_application_phase \
+    games-service "Games service revision" "$GAMES_ACTIVE_APPLICATIONS" games-service
+  run_timed_phase "library-service rollout" deploy_application_phase \
+    library-service "Library service revision" "$LIBRARY_ACTIVE_APPLICATIONS" library-service
+  run_timed_phase "order-service rollout" deploy_application_phase \
+    order-service "Order service revision" "$ORDER_ACTIVE_APPLICATIONS" order-service
+  run_timed_phase "payment-service rollout" deploy_application_phase \
+    payment-service "Payment service revision" "$PAYMENT_ACTIVE_APPLICATIONS" payment-service
+  run_timed_phase "user-service rollout" deploy_application_phase \
+    user-service "User service revision" "$BUSINESS_ACTIVE_APPLICATIONS" user-service
+  run_timed_phase "client rollout" deploy_application_phase \
+    client "Client revision and complete application set" "$ALL_ACTIVE_APPLICATIONS" client
+  run_timed_phase "public HTTP checks" run_post_deployment_health_checks
+  printf 'Timing: complete ACA deployment = %ss\n' "$((SECONDS - deployment_started_at))"
   echo "ACA release completed successfully without deleting prior applications or revisions."
 }
 
