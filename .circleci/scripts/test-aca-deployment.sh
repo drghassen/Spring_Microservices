@@ -219,6 +219,152 @@ test_multiline_revision_parsing() {
   [[ "${revision_details[2]}" == "example.azurecr.io/app@sha256:fixture" ]]
 }
 
+eureka_health_fixture() {
+  local overall_status="$1" eureka_status="$2" applications="$3"
+  jq -cn --arg overall_status "$overall_status" --arg eureka_status "$eureka_status" \
+    --argjson applications "$applications" '{
+      status: $overall_status,
+      components: {
+        discoveryComposite: {
+          components: {
+            eureka: {
+              status: $eureka_status,
+              details: {applications: $applications}
+            }
+          }
+        }
+      }
+    }'
+}
+
+run_mocked_eureka_sequence() {
+  local -a responses=("$@")
+  local response_index=0
+  DEPLOYED_REVISIONS[gateway]='gateway--healthy-fixture'
+
+  fetch_eureka_health_json() {
+    local response
+    [[ "$1" == 'gateway--healthy-fixture' ]] || return 1
+    if ((response_index < ${#responses[@]})); then
+      response="${responses[$response_index]}"
+      response_index=$((response_index + 1))
+    else
+      response="${responses[${#responses[@]} - 1]}"
+    fi
+    [[ "$response" != 'FETCH_FAILURE' ]] || return 1
+    EUREKA_HEALTH_JSON="$response"
+  }
+
+  # Advance the special Bash clock without waiting for production intervals.
+  sleep() {
+    SECONDS=$((SECONDS + EUREKA_TIMEOUT_SECONDS))
+  }
+
+  verify_eureka_registrations
+}
+
+test_eureka_exactly_one() {
+  local health
+  health="$(eureka_health_fixture UP UP \
+    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
+  run_mocked_eureka_sequence "$health"
+}
+
+test_eureka_exactly_two() {
+  local health
+  health="$(eureka_health_fixture UP UP \
+    '{"GATEWAY":2,"GAMES-SERVICE":2,"PAYMENT-SERVICE":2,"LIBRARY-SERVICE":2,"ORDER-SERVICE":2,"USER-SERVICE":2}')"
+  run_mocked_eureka_sequence "$health"
+}
+
+test_eureka_mixed_positive_counts() {
+  local health output
+  health="$(eureka_health_fixture UP UP \
+    '{"GATEWAY":2,"GAMES-SERVICE":2,"PAYMENT-SERVICE":2,"LIBRARY-SERVICE":2,"ORDER-SERVICE":3,"USER-SERVICE":2}')"
+  output="$(run_mocked_eureka_sequence "$health")"
+  [[ "$output" == *'GATEWAY=2'* ]]
+  [[ "$output" == *'ORDER-SERVICE=3'* ]]
+  [[ "$output" == *'at least one registered instance'* ]]
+}
+
+test_eureka_missing_then_registered() {
+  local missing complete
+  missing="$(eureka_health_fixture UP UP \
+    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1}')"
+  complete="$(eureka_health_fixture UP UP \
+    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
+  run_mocked_eureka_sequence "$missing" "$complete"
+}
+
+test_eureka_service_remains_missing() {
+  local health
+  health="$(eureka_health_fixture UP UP \
+    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1}')"
+  run_mocked_eureka_sequence "$health"
+}
+
+test_eureka_zero_count() {
+  local health
+  health="$(eureka_health_fixture UP UP \
+    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":0,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
+  run_mocked_eureka_sequence "$health"
+}
+
+test_eureka_down_then_up() {
+  local down up
+  down="$(eureka_health_fixture UP DOWN \
+    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
+  up="$(eureka_health_fixture UP UP \
+    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
+  run_mocked_eureka_sequence "$down" "$up"
+}
+
+test_eureka_remains_down() {
+  local health
+  health="$(eureka_health_fixture UP DOWN \
+    '{"GATEWAY":1,"GAMES-SERVICE":1,"PAYMENT-SERVICE":1,"LIBRARY-SERVICE":1,"ORDER-SERVICE":1,"USER-SERVICE":1}')"
+  run_mocked_eureka_sequence "$health"
+}
+
+test_eureka_malformed_json() {
+  run_mocked_eureka_sequence 'not-json'
+}
+
+test_eureka_missing_structure() {
+  run_mocked_eureka_sequence '{"status":"UP","components":{}}'
+}
+
+test_eureka_diagnostics_exclude_health_values() {
+  local health output sensitive_value='fixture-sensitive-health-value-never-print'
+  health="$(jq -cn --arg sensitive_value "$sensitive_value" '{
+    status: "UP",
+    components: {unrelated: {details: {credential: $sensitive_value}}}
+  }')"
+  output="$(run_mocked_eureka_sequence "$health" 2>&1 || true)"
+  [[ "$output" != *"$sensitive_value"* ]]
+  [[ "$output" == *'Eureka status not UP yet'* ]]
+}
+
+test_post_deployment_http_checks_unchanged() {
+  local event_file
+  event_file="$(mktemp)"
+  az() {
+    [[ "$*" == *'containerapp show --name client'* ]] || return 1
+    printf '%s\n' 'client.example.test'
+  }
+  assert_public_http_status() {
+    printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$event_file"
+  }
+  verify_eureka_registrations() {
+    printf '%s\n' eureka >>"$event_file"
+  }
+
+  run_post_deployment_health_checks >/dev/null
+  grep -Fxq 'client|https://client.example.test/|200' "$event_file"
+  grep -Fxq 'public Gateway games route|https://client.example.test/api/v1/games|200' "$event_file"
+  grep -Fxq 'eureka' "$event_file"
+}
+
 write_plan_fixture() {
   local file="$1" actions="$2"
   local address="${3:-module.apps.azurerm_container_app.this[\"client\"]}"
@@ -631,6 +777,18 @@ assert_succeeds "multiline Azure CLI revision details are parsed exactly" test_m
 assert_fails "Config Server unhealthy revision stops release" test_revision_health_failure config-server
 assert_fails "Discovery unhealthy revision stops release" test_revision_health_failure discovery-service
 assert_fails "Gateway unhealthy revision stops release" test_revision_health_failure gateway
+assert_succeeds "Eureka accepts exactly one registration per application" test_eureka_exactly_one
+assert_succeeds "Eureka accepts exactly two registrations per application" test_eureka_exactly_two
+assert_succeeds "Eureka accepts mixed positive registration counts" test_eureka_mixed_positive_counts
+assert_succeeds "Eureka retries until a missing application registers" test_eureka_missing_then_registered
+assert_fails "Eureka fails when an application remains missing" test_eureka_service_remains_missing
+assert_fails "Eureka fails when an application count remains zero" test_eureka_zero_count
+assert_succeeds "Eureka retries a DOWN status until it is UP" test_eureka_down_then_up
+assert_fails "Eureka fails when its status remains DOWN" test_eureka_remains_down
+assert_fails "Eureka safely rejects malformed health JSON" test_eureka_malformed_json
+assert_fails "Eureka safely rejects a missing health structure" test_eureka_missing_structure
+assert_succeeds "Eureka diagnostics exclude unrelated health values" test_eureka_diagnostics_exclude_health_values
+assert_succeeds "post-deployment public HTTP checks remain unchanged" test_post_deployment_http_checks_unchanged
 assert_succeeds "normal redeploy with unchanged applications passes pre-migration" test_normal_redeploy_no_changes
 assert_succeeds "application image update is allowed only after migration" test_application_image_update_after_migration_allowed
 assert_succeeds "migration-job image update is allowed before migration" test_migration_job_image_update_before_migration_allowed
