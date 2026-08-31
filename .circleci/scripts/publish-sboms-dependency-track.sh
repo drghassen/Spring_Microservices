@@ -11,6 +11,7 @@ readonly DTRACK_REPORT_ROOT="reports/dependency-track"
 readonly DTRACK_WAIT_ATTEMPTS="${DTRACK_WAIT_ATTEMPTS:-30}"
 readonly DTRACK_WAIT_INTERVAL_SECONDS="${DTRACK_WAIT_INTERVAL_SECONDS:-5}"
 readonly DTRACK_PARALLELISM="${DTRACK_PARALLELISM:-3}"
+readonly DTRACK_SCRIPT_STARTED_AT="$(timing_now)"
 
 : "${DTRACK_URL:?DTRACK_URL must be defined in the dependency-track CircleCI context}"
 : "${DTRACK_API_KEY:?DTRACK_API_KEY must be defined in the dependency-track CircleCI context}"
@@ -283,17 +284,24 @@ publish_service_sbom() {
   mkdir -p "$service_report_dir"
   rm -f -- "$response_file" "$summary_file"
 
-  generate_sbom "$service" "$image" "$sbom_file"
-  validate_sbom "$service" "$image" "$sbom_file"
-  upload_sbom "$service" "$sbom_file" "$response_file"
+  run_timed_step "[DTrack timing] service=${service} generation" \
+    generate_sbom "$service" "$image" "$sbom_file"
+  run_timed_step "[DTrack timing] service=${service} validation" \
+    validate_sbom "$service" "$image" "$sbom_file"
+  run_timed_step "[DTrack timing] service=${service} upload" \
+    upload_sbom "$service" "$sbom_file" "$response_file"
   record_upload_summary "$service" "$image" "$sbom_file" "$summary_file"
 }
 
 wait_for_publish_batch() {
   local batch_failed=0
+  local batch_started_at
   local index
   local pid
   local service
+
+  publish_batch_number=$(( publish_batch_number + 1 ))
+  batch_started_at="$(timing_now)"
 
   for index in "${!publish_pids[@]}"; do
     pid="${publish_pids[$index]}"
@@ -308,6 +316,7 @@ wait_for_publish_batch() {
 
   publish_pids=()
   publish_services=()
+  report_timing "[DTrack timing] batch=${publish_batch_number} wait" "$batch_started_at"
   return "$batch_failed"
 }
 
@@ -324,6 +333,14 @@ cleanup_publish_jobs() {
 
   publish_pids=()
   publish_services=()
+}
+
+cleanup_publish_jobs_and_report_total() {
+  local exit_status=$?
+
+  cleanup_publish_jobs
+  report_timing "Dependency-Track total" "$DTRACK_SCRIPT_STARTED_AT"
+  return "$exit_status"
 }
 
 merge_upload_summaries() {
@@ -413,18 +430,21 @@ validate_current_outputs() {
     | LC_ALL=C sort -nr
 }
 
+declare -a publish_pids=()
+declare -a publish_services=()
+publish_failed=0
+publish_batch_number=0
+trap cleanup_publish_jobs_and_report_total EXIT
+
 reset_report_roots
 : > "${DTRACK_REPORT_ROOT}/upload-summary.jsonl"
 
 validate_parallelism
-wait_for_dependency_track
-validate_parent_project
-prepare_syft
+run_timed_step "Dependency-Track readiness" wait_for_dependency_track
+run_timed_step "Dependency-Track parent validation" validate_parent_project
+run_timed_step "Syft preparation" prepare_syft
 
-declare -a publish_pids=()
-declare -a publish_services=()
-publish_failed=0
-trap cleanup_publish_jobs EXIT
+publication_started_at="$(timing_now)"
 
 for service in "${APP_SERVICES[@]}"; do
   publish_service_sbom "$service" &
@@ -440,10 +460,14 @@ if (( ${#publish_pids[@]} > 0 )); then
   wait_for_publish_batch || publish_failed=1
 fi
 
+report_timing "SBOM publication total" "$publication_started_at"
+
 if (( publish_failed )); then
   echo "One or more Dependency-Track SBOM publications failed." >&2
   exit 1
 fi
 
-merge_upload_summaries
-validate_current_outputs
+validation_started_at="$(timing_now)"
+run_timed_step "merge_upload_summaries" merge_upload_summaries
+run_timed_step "validate_current_outputs" validate_current_outputs
+report_timing "Dependency-Track validation" "$validation_started_at"

@@ -90,13 +90,20 @@ commands:
 
   load-candidate-images:
     description: Load the frontend and backend image archives produced by the parallel build jobs.
+    parameters:
+      timing-label:
+        type: string
+        default: candidate image loading
     steps:
       - run:
           name: Configure candidate image tag
           command: echo 'export IMAGE_TAG=build-<< pipeline.number >>' >> "$BASH_ENV"
       - run:
           name: Load the immutable candidate images
-          command: bash .circleci/scripts/load-application-images.sh
+          command: |
+            source .circleci/scripts/lib/application-images.sh
+            run_timed_step '<< parameters.timing-label >>' \
+              bash .circleci/scripts/load-application-images.sh
 
   send-security-alert-on-failure:
     description: Email a concise scanner report without masking the gate failure.
@@ -378,10 +385,14 @@ jobs:
               fi
             done
             find ci-image-archives -type f -printf '%s %p\n' 2>/dev/null | sort -nr || true
-      - load-candidate-images
+      - load-candidate-images:
+          timing-label: DTrack candidate image loading
       - run:
           name: Generate CycloneDX 1.6 SBOMs and publish to Dependency-Track
-          command: bash .circleci/scripts/publish-sboms-dependency-track.sh
+          command: |
+            source .circleci/scripts/lib/application-images.sh
+            run_timed_step 'DTrack SBOM + Dependency-Track' \
+              bash .circleci/scripts/publish-sboms-dependency-track.sh
       - send-security-alert-on-failure:
           scanner: Dependency-Track SBOM publication
           reports: reports/dependency-track

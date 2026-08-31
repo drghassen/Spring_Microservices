@@ -18,6 +18,58 @@ readonly GATEWAY_DISCOVERY_HEALTH_URL="${GATEWAY_DISCOVERY_HEALTH_URL:-http://lo
 readonly CI_DAST_FIXTURE_USERNAME="admin"
 readonly CI_DAST_FIXTURE_PASSWORD="ci-compose-fixture-admin"
 
+timing_now() {
+  date +%s
+}
+
+timing_elapsed_seconds() {
+  local started_at="$1"
+  local finished_at
+
+  finished_at="$(timing_now)"
+  printf '%s\n' "$(( finished_at - started_at ))"
+}
+
+report_timing() {
+  local safe_label="$1"
+  local started_at="$2"
+
+  printf 'Timing: %s = %ss\n' "$safe_label" "$(timing_elapsed_seconds "$started_at")"
+}
+
+run_timed_step() {
+  local safe_label="$1"
+  shift
+  local started_at
+  local command_status
+  local errexit_was_enabled=0
+
+  started_at="$(timing_now)"
+  [[ $- == *e* ]] && errexit_was_enabled=1
+
+  # Run in an isolated shell so the wrapped command retains errexit semantics
+  # while this shell can capture, report, and return its exact status. Callers
+  # that need function-side mutations use timing_now/report_timing directly.
+  set +e
+  (
+    if (( errexit_was_enabled )); then
+      set -e
+    else
+      set +e
+    fi
+    "$@"
+  )
+  command_status=$?
+  if (( errexit_was_enabled )); then
+    set -e
+  else
+    set +e
+  fi
+
+  report_timing "$safe_label" "$started_at"
+  return "$command_status"
+}
+
 configure_candidate_images() {
   : "${IMAGE_TAG:?IMAGE_TAG must be defined by CircleCI config as build-<< pipeline.number >>}"
 

@@ -13,8 +13,9 @@ mkdir -p reports
 ensure_jq
 ensure_curl
 
-wait_for_application_stack
-run_integration_smoke_checks
+run_timed_step "application stack startup" wait_for_application_stack
+run_timed_step "integration smoke checks" run_integration_smoke_checks
 
 use_ci_dast_fixture_credentials
-DAST_STACK_READY=true bash .circleci/scripts/run-dast.sh
+run_timed_step "complete DAST phase" env DAST_STACK_READY=true \
+  bash .circleci/scripts/run-dast.sh

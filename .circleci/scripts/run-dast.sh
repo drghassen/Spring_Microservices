@@ -15,6 +15,7 @@ readonly CLIENT_TARGET_URL="http://client:8080/"
 readonly GATEWAY_HEALTH_URL="${GATEWAY_TARGET_URL}/actuator/health"
 readonly AUTH_LOGIN_URL="${GATEWAY_TARGET_URL}/api/v1/auth/login"
 readonly AUTH_VALIDATION_URL_BASE="${GATEWAY_TARGET_URL}/api/v1/users/username"
+readonly DAST_SCRIPT_STARTED_AT="$(timing_now)"
 
 declare -a SCAN_ERRORS=()
 declare -a SECURITY_FINDINGS_HIGH=()
@@ -323,6 +324,18 @@ validate_openapi_document() {
 
 prepare_zap_report_dir
 
+finish_dast() {
+  local exit_status=$?
+
+  report_timing "DAST total" "$DAST_SCRIPT_STARTED_AT"
+  if [[ "${DAST_STACK_READY:-false}" == "true" ]]; then
+    cleanup_ci_compose_env_file
+  else
+    collect_compose_logs_and_cleanup
+  fi
+  return "$exit_status"
+}
+
 if [[ "${DAST_STACK_READY:-false}" != "true" ]]; then
   configure_runtime_environment
   create_ci_compose_env_file
@@ -330,12 +343,12 @@ if [[ "${DAST_STACK_READY:-false}" != "true" ]]; then
   export COMPOSE_REPORT_NAME="dast"
   # collect_compose_logs_and_cleanup preserves the existing DAST stack
   # cleanup and invokes cleanup_ci_compose_env_file on every EXIT path.
-  trap collect_compose_logs_and_cleanup EXIT
+  trap finish_dast EXIT
   wait_for_application_stack
 else
   : "${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME must be set when DAST_STACK_READY=true}"
   create_ci_compose_env_file
-  trap cleanup_ci_compose_env_file EXIT
+  trap finish_dast EXIT
 fi
 
 gate_high_risk_alerts() {
@@ -468,21 +481,29 @@ zap_api_scan() {
 
 dast_scan_failed=0
 auth_ready=0
+network_started_at="$(timing_now)"
 
 if verify_zap_network_connectivity; then
+  report_timing "DAST network connectivity" "$network_started_at"
+  frontend_started_at="$(timing_now)"
   if ! zap_frontend_full_scan client "$CLIENT_TARGET_URL"; then
     dast_scan_failed=1
   fi
+  report_timing "frontend full scan" "$frontend_started_at"
 
+  gateway_started_at="$(timing_now)"
   if ! zap_baseline gateway "$GATEWAY_HEALTH_URL"; then
     dast_scan_failed=1
   fi
+  report_timing "Gateway baseline" "$gateway_started_at"
 
+  authentication_started_at="$(timing_now)"
   if configure_dast_jwt_token; then
     auth_ready=1
   else
     dast_scan_failed=1
   fi
+  report_timing "authentication" "$authentication_started_at"
 
   declare -A API_DOC_PATHS=(
     [users]="/users/v3/api-docs"
@@ -502,14 +523,17 @@ if verify_zap_network_connectivity; then
 
   if (( auth_ready )); then
     for api in users games library order payment; do
+      api_started_at="$(timing_now)"
       if ! zap_api_scan "${api}-api" "${GATEWAY_TARGET_URL}${API_DOC_PATHS[$api]}" "${API_TARGET_URLS[$api]}"; then
         dast_scan_failed=1
       fi
+      report_timing "${api} API scan" "$api_started_at"
     done
   else
     echo "Skipping authenticated API scans because DAST authentication failed." >&2
   fi
 else
+  report_timing "DAST network connectivity" "$network_started_at"
   dast_scan_failed=1
 fi
 
