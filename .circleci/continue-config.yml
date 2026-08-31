@@ -637,32 +637,35 @@ workflows:
           requires:
             - frontend-image-build
             - backend-image-build
-      # Stage 5: Syft publishes CycloneDX 1.6 SBOMs from the exact candidate images.
+      # Stage 5: independent DTrack and runtime/DAST security gates run in parallel
+      # after Trivy approves the exact candidate images.
       - dependency-track-sbom-publish:
           context:
             - sonarqube
             - security-alerts
           requires:
             - image-trivy-scan
-      # Stage 6: one Compose stack validates runtime integration, then OWASP ZAP
-      # scans the same qualified stack to avoid a second Docker load/startup.
+      # One Compose stack validates runtime integration, then OWASP ZAP scans
+      # the same qualified stack to avoid a second Docker load/startup.
       - container-integration-dast:
           context:
             - security-alerts
             - DAST
           requires:
-            - dependency-track-sbom-publish
-      # Stage 7: only master publishes images that passed every preceding gate.
+            - image-trivy-scan
+      # Stage 6: only master publishes images after both parallel security gates
+      # and database migration image qualification pass.
       - release-acr:
           context:
             - acr-publish
           requires:
+            - dependency-track-sbom-publish
             - container-integration-dast
             - qualify-database-migrations-image
           filters:
             branches:
               only: master
-      # Stage 8: verify ACA credentials and read-only Azure/Terraform access
+      # Stage 7: verify ACA credentials and read-only Azure/Terraform access
       # before calculating a release plan.
       - aca-preflight:
           context:
@@ -672,7 +675,7 @@ workflows:
           filters:
             branches:
               only: master
-      # Stage 9: calculate a read-only plan, require approval, then recalculate before apply.
+      # Stage 8: calculate a read-only plan, require approval, then recalculate before apply.
       - plan-aca:
           context:
             - aca-deploy

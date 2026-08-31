@@ -6,6 +6,7 @@ readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly IMAGE_LIBRARY="${REPOSITORY_ROOT}/.circleci/scripts/lib/application-images.sh"
 readonly DTRACK_SCRIPT="${REPOSITORY_ROOT}/.circleci/scripts/publish-sboms-dependency-track.sh"
 readonly DAST_SCRIPT="${REPOSITORY_ROOT}/.circleci/scripts/run-dast.sh"
+readonly CONTINUE_CONFIG="${REPOSITORY_ROOT}/.circleci/continue-config.yml"
 
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/application-images.sh
@@ -135,6 +136,47 @@ test_scan_errors_still_fail() {
   grep -Fq 'exit 1' "$DAST_SCRIPT"
 }
 
+test_application_security_gate_dag() {
+  python3 - "$CONTINUE_CONFIG" <<'PY'
+import sys
+
+try:
+    import yaml
+except ImportError as error:
+    raise SystemExit("PyYAML is required for the CircleCI DAG regression test") from error
+
+with open(sys.argv[1], encoding="utf-8") as config_file:
+    config = yaml.safe_load(config_file)
+
+workflow_jobs = config["workflows"]["application-ci"]["jobs"]
+jobs = {}
+for entry in workflow_jobs:
+    if isinstance(entry, str):
+        jobs[entry] = {}
+    elif isinstance(entry, dict) and len(entry) == 1:
+        name, job_config = next(iter(entry.items()))
+        jobs[name] = job_config or {}
+    else:
+        raise AssertionError(f"unexpected application-ci job entry: {entry!r}")
+
+def requires(job_name):
+    required_jobs = jobs[job_name].get("requires", [])
+    if not isinstance(required_jobs, list):
+        raise AssertionError(f"{job_name} requires must be a list")
+    return set(required_jobs)
+
+assert requires("dependency-track-sbom-publish") == {"image-trivy-scan"}
+assert requires("container-integration-dast") == {"image-trivy-scan"}
+assert "dependency-track-sbom-publish" not in requires("container-integration-dast")
+assert requires("release-acr") == {
+    "dependency-track-sbom-publish",
+    "container-integration-dast",
+    "qualify-database-migrations-image",
+}
+assert requires("aca-preflight") == {"release-acr"}
+PY
+}
+
 test_timed_success || fail "timed successful function returns zero"
 pass "timed successful function returns zero"
 test_timed_failure_status || fail "timed failed function preserves its status"
@@ -160,5 +202,7 @@ test_high_findings_still_fail || fail "HIGH findings still fail DAST"
 pass "HIGH findings still fail DAST"
 test_scan_errors_still_fail || fail "scan execution errors still fail DAST"
 pass "scan execution errors still fail DAST"
+test_application_security_gate_dag || fail "application security gate DAG remains fail-closed"
+pass "application security gate DAG remains fail-closed"
 
 printf 'Security instrumentation suite passed: %s checks.\n' "$TEST_COUNT"
