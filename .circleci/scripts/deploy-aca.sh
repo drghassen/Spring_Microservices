@@ -383,6 +383,62 @@ digests_as_json() {
   printf '%s\n' "$json"
 }
 
+print_unexpected_container_app_changes() {
+  local plan_json="$1"
+
+  printf 'Unexpected pre-migration Container App changes:\n' >&2
+  jq -r '
+    def path_text:
+      reduce .[] as $part ("";
+        . + if ($part | type) == "number" then
+          "[\($part)]"
+        elif . == "" then
+          $part
+        else
+          ".\($part)"
+        end
+      );
+    def changed_paths($before; $after; $before_sensitive; $after_sensitive; $path):
+      if $before == $after then
+        empty
+      elif $before_sensitive == true or $after_sensitive == true then
+        $path
+      elif ($before | type) == "object" and ($after | type) == "object" then
+        (($before | keys_unsorted) + ($after | keys_unsorted) | unique[]) as $key
+        | changed_paths(
+            $before[$key];
+            $after[$key];
+            $before_sensitive[$key];
+            $after_sensitive[$key];
+            $path + [$key]
+          )
+      elif ($before | type) == "array" and ($after | type) == "array" then
+        range(0; [($before | length), ($after | length)] | max) as $index
+        | changed_paths(
+            $before[$index];
+            $after[$index];
+            $before_sensitive[$index];
+            $after_sensitive[$index];
+            $path + [$index]
+          )
+      else
+        $path
+      end;
+    .resource_changes[]?
+    | select(.address | test("^module[.]apps[.]azurerm_container_app[.]this\\["))
+    | select(.change.actions != ["no-op"])
+    | . as $resource
+    | [changed_paths(
+        $resource.change.before;
+        $resource.change.after;
+        $resource.change.before_sensitive;
+        $resource.change.after_sensitive;
+        []
+      ) | path_text] as $paths
+    | "\n- \($resource.address)\n  actions: \($resource.change.actions | tojson)\n  changed paths: \($paths | unique | join(", "))"
+  ' "$plan_json" >&2
+}
+
 inspect_plan_json() {
   local plan_json="$1" phase_name="$2" allowed_create_scope="$3"
   local replacement_count unexpected_create_count unexpected_app_change_count
@@ -418,6 +474,7 @@ inspect_plan_json() {
       | select(.change.actions != ["no-op"])
     ] | length' "$plan_json")"
     if ((unexpected_app_change_count != 0)); then
+      print_unexpected_container_app_changes "$plan_json"
       printf 'Container App change detected before migration in phase %s; operation refused.\n' \
         "$phase_name" >&2
       return 1
