@@ -9,6 +9,9 @@ parameters:
   run_azure_oidc_audit:
     type: boolean
     default: false
+  run_prowler_rg_scan:
+    type: boolean
+    default: false
 
 orbs:
   continuation: circleci/continuation@2.0.1
@@ -148,12 +151,77 @@ jobs:
           name: Validate Azure OIDC authentication and non-destructive permissions
           command: bash .circleci/scripts/azure-oidc-audit.sh
 
+  prowler-rg-security-scan:
+    machine: true
+    resource_class: drghassen/sonar-vm
+    working_directory: ~/project
+    steps:
+      - checkout:
+          method: full
+      - run:
+          name: Validate the self-hosted Prowler runtime
+          command: |
+            set -euo pipefail
+
+            for required_command in prowler az python3 curl; do
+              command -v "$required_command"
+            done
+            prowler_version="$(prowler --version)"
+            printf 'Prowler version: %s\n' "$prowler_version"
+            [[ "$prowler_version" == *'5.40.0'* ]] || {
+              echo "Prowler 5.40.0 is required on the self-hosted runner." >&2
+              exit 1
+            }
+
+            getent hosts host.docker.internal >/dev/null || {
+              echo "host.docker.internal does not resolve on the self-hosted runner." >&2
+              exit 1
+            }
+            test -r "$DD_CA_CERT" || {
+              echo "DD_CA_CERT is not readable on the self-hosted runner." >&2
+              exit 1
+            }
+            test -n "${DD_TOKEN:-}" || {
+              echo "DD_TOKEN is missing from the Prowler CircleCI context." >&2
+              exit 1
+            }
+            test "$DD_TEST_ID" = "1429" || {
+              echo "DD_TEST_ID must target the dedicated resource-group Test 1429." >&2
+              exit 1
+            }
+            for required_variable in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID; do
+              test -n "${!required_variable:-}" || {
+                printf '%s is missing from the Azure CircleCI context.\n' \
+                  "$required_variable" >&2
+                exit 1
+              }
+            done
+
+            source .circleci/scripts/lib/aca-deployment.sh
+            aca_require_circleci_environment_cli
+      - run:
+          name: Authenticate with Azure OIDC and run the scheduled RG scan
+          command: |
+            set -euo pipefail
+
+            source .circleci/scripts/lib/aca-deployment.sh
+            aca_authenticate_with_circleci_oidc
+
+            az account show --output none --only-show-errors
+            az resource list \
+              --subscription "$AZURE_SUBSCRIPTION_ID" \
+              --output none \
+              --only-show-errors
+
+            bash security/prowler/run-scheduled-rg-scan.sh
+
 workflows:
   setup-path-filtering:
     when:
       and:
         - not: << pipeline.parameters.run_oidc_claims_audit >>
         - not: << pipeline.parameters.run_azure_oidc_audit >>
+        - not: << pipeline.parameters.run_prowler_rg_scan >>
     jobs:
       - select-ci-workflows
 
@@ -162,6 +230,7 @@ workflows:
       and:
         - << pipeline.parameters.run_oidc_claims_audit >>
         - not: << pipeline.parameters.run_azure_oidc_audit >>
+        - not: << pipeline.parameters.run_prowler_rg_scan >>
     jobs:
       - oidc-claims-audit:
           filters:
@@ -173,10 +242,26 @@ workflows:
       and:
         - << pipeline.parameters.run_azure_oidc_audit >>
         - not: << pipeline.parameters.run_oidc_claims_audit >>
+        - not: << pipeline.parameters.run_prowler_rg_scan >>
     jobs:
       - azure-oidc-audit:
           context:
             - aca-deploy
+          filters:
+            branches:
+              only: master
+
+  prowler-rg-security-scan:
+    when:
+      and:
+        - << pipeline.parameters.run_prowler_rg_scan >>
+        - not: << pipeline.parameters.run_oidc_claims_audit >>
+        - not: << pipeline.parameters.run_azure_oidc_audit >>
+    jobs:
+      - prowler-rg-security-scan:
+          context:
+            - aca-deploy
+            - prowler-security
           filters:
             branches:
               only: master
