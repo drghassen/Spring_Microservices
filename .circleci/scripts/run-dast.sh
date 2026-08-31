@@ -2,9 +2,9 @@
 
 set -Eeuo pipefail
 
-source "$(dirname "$0")/lib/application-images.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/application-images.sh"
 
-readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ZAP_IMAGE="ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef"
 readonly ZAP_REPORT_DIR="$PWD/reports/zap"
 readonly ZAP_WORK_DIR="/zap/wrk"
@@ -15,13 +15,40 @@ readonly CLIENT_TARGET_URL="http://client:8080/"
 readonly GATEWAY_HEALTH_URL="${GATEWAY_TARGET_URL}/actuator/health"
 readonly AUTH_LOGIN_URL="${GATEWAY_TARGET_URL}/api/v1/auth/login"
 readonly AUTH_VALIDATION_URL_BASE="${GATEWAY_TARGET_URL}/api/v1/users/username"
-readonly DAST_SCRIPT_STARTED_AT="$(timing_now)"
+readonly DAST_API_PARALLELISM="${DAST_API_PARALLELISM:-3}"
+readonly API_WORKER_RESULT_DIR="${ZAP_REPORT_DIR}/api-worker-results"
+readonly -a AUTHENTICATED_APIS=(users games library order payment)
+readonly -A API_DOC_PATHS=(
+  [users]="/users/v3/api-docs"
+  [games]="/games/v3/api-docs"
+  [library]="/library/v3/api-docs"
+  [order]="/order/v3/api-docs"
+  [payment]="/payment/v3/api-docs"
+)
+readonly -A API_TARGET_URLS=(
+  [users]="${GATEWAY_TARGET_URL}"
+  [games]="${GATEWAY_TARGET_URL}"
+  [library]="${GATEWAY_TARGET_URL}"
+  [order]="${GATEWAY_TARGET_URL}"
+  [payment]="${GATEWAY_TARGET_URL}"
+)
+
+DAST_SCRIPT_STARTED_AT=0
 
 declare -a SCAN_ERRORS=()
 declare -a SECURITY_FINDINGS_HIGH=()
+declare -a API_WORKER_PIDS=()
+declare -A API_WORKER_API_BY_PID=()
+declare -A API_WORKER_STATUS_BY_API=()
 
-configure_candidate_images
-ensure_jq
+validate_dast_api_parallelism() {
+  local parallelism="${1:-$DAST_API_PARALLELISM}"
+
+  [[ "$parallelism" =~ ^[1-3]$ ]] || {
+    echo "DAST_API_PARALLELISM must be an integer from 1 to 3; got: ${parallelism}" >&2
+    return 1
+  }
+}
 
 prepare_zap_report_dir() {
   mkdir -p "$ZAP_REPORT_DIR"
@@ -54,13 +81,16 @@ zap_network() {
 
 zap_docker_base() {
   local -a env_args=()
+  local -a name_args=()
 
   [[ -n "${DAST_JWT_TOKEN:-}" ]] && env_args+=(-e DAST_JWT_TOKEN)
   [[ -n "${DAST_AUTH_URL_REGEX:-}" ]] && env_args+=(-e DAST_AUTH_URL_REGEX)
   [[ -n "${DAST_AUTH_USERNAME+x}" ]] && env_args+=(-e DAST_AUTH_USERNAME)
   [[ -n "${DAST_AUTH_PASSWORD+x}" ]] && env_args+=(-e DAST_AUTH_PASSWORD)
+  [[ -n "${ZAP_DOCKER_NAME:-}" ]] && name_args+=(--name "$ZAP_DOCKER_NAME")
 
   docker run --rm \
+    "${name_args[@]}" \
     --network "$(zap_network)" \
     "${env_args[@]}" \
     -v "${ZAP_REPORT_DIR}:${ZAP_WORK_DIR}:rw" \
@@ -322,11 +352,11 @@ validate_openapi_document() {
   sed -n '1,20p' "$headers_file"
 }
 
-prepare_zap_report_dir
-
 finish_dast() {
   local exit_status=$?
 
+  trap - INT TERM
+  terminate_api_workers
   report_timing "DAST total" "$DAST_SCRIPT_STARTED_AT"
   if [[ "${DAST_STACK_READY:-false}" == "true" ]]; then
     cleanup_ci_compose_env_file
@@ -335,21 +365,6 @@ finish_dast() {
   fi
   return "$exit_status"
 }
-
-if [[ "${DAST_STACK_READY:-false}" != "true" ]]; then
-  configure_runtime_environment
-  create_ci_compose_env_file
-  use_ci_dast_fixture_credentials
-  export COMPOSE_REPORT_NAME="dast"
-  # collect_compose_logs_and_cleanup preserves the existing DAST stack
-  # cleanup and invokes cleanup_ci_compose_env_file on every EXIT path.
-  trap finish_dast EXIT
-  wait_for_application_stack
-else
-  : "${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME must be set when DAST_STACK_READY=true}"
-  create_ci_compose_env_file
-  trap finish_dast EXIT
-fi
 
 gate_high_risk_alerts() {
   local target_name="$1"
@@ -479,74 +494,432 @@ zap_api_scan() {
     -r "${ZAP_WORK_DIR}/${target_name}.html"
 }
 
-dast_scan_failed=0
-auth_ready=0
-network_started_at="$(timing_now)"
+api_worker_container_name() {
+  local api="$1"
 
-if verify_zap_network_connectivity; then
-  report_timing "DAST network connectivity" "$network_started_at"
-  frontend_started_at="$(timing_now)"
-  if ! zap_frontend_full_scan client "$CLIENT_TARGET_URL"; then
-    dast_scan_failed=1
+  printf '%s-zap-%s-api\n' "${COMPOSE_PROJECT_NAME:-dast}" "$api"
+}
+
+api_output_paths() {
+  local api="$1"
+  local target_name="${api}-api"
+
+  printf '%s\n' \
+    "${ZAP_REPORT_DIR}/${target_name}.json" \
+    "${ZAP_REPORT_DIR}/${target_name}.html" \
+    "${ZAP_REPORT_DIR}/${target_name}.openapi.json" \
+    "${ZAP_REPORT_DIR}/${target_name}.openapi.headers" \
+    "${API_WORKER_RESULT_DIR}/${api}.json"
+}
+
+validate_unique_api_output_paths() {
+  local api
+  local output_path
+  local -A seen_paths=()
+
+  for api in "${AUTHENTICATED_APIS[@]}"; do
+    while IFS= read -r output_path; do
+      [[ -z "${seen_paths[$output_path]+x}" ]] || {
+        echo "Duplicate authenticated API output path: ${output_path}" >&2
+        return 1
+      }
+      seen_paths["$output_path"]="$api"
+    done < <(api_output_paths "$api")
+  done
+}
+
+prepare_api_worker_result_dir() {
+  [[ "$API_WORKER_RESULT_DIR" == "${ZAP_REPORT_DIR}/api-worker-results" ]] || {
+    echo "Refusing to reset unexpected DAST API worker result directory." >&2
+    return 1
+  }
+
+  rm -rf -- "$API_WORKER_RESULT_DIR"
+  mkdir -p "$API_WORKER_RESULT_DIR"
+}
+
+api_worker_high_count() {
+  local finding
+  local high_count=0
+
+  for finding in "${SECURITY_FINDINGS_HIGH[@]}"; do
+    if [[ "$finding" =~ high_count=([0-9]+)$ ]]; then
+      high_count=$(( high_count + BASH_REMATCH[1] ))
+    else
+      return 1
+    fi
+  done
+  printf '%s\n' "$high_count"
+}
+
+write_api_worker_result() {
+  local api="$1"
+  local scan_success="$2"
+  local high_count="$3"
+  local exit_code="$4"
+  local elapsed_seconds="$5"
+  local result_file="${API_WORKER_RESULT_DIR}/${api}.json"
+  local temporary_file
+
+  temporary_file="$(mktemp "${API_WORKER_RESULT_DIR}/.${api}.XXXXXX.tmp")"
+  if ! jq -n \
+    --arg api "$api" \
+    --argjson scanSuccess "$scan_success" \
+    --argjson highCount "$high_count" \
+    --argjson exitCode "$exit_code" \
+    --argjson elapsedSeconds "$elapsed_seconds" \
+    '{
+      api: $api,
+      scan_success: $scanSuccess,
+      high_count: $highCount,
+      exit_code: $exitCode,
+      elapsed_seconds: $elapsedSeconds
+    }' > "$temporary_file"; then
+    rm -f -- "$temporary_file"
+    return 1
   fi
-  report_timing "frontend full scan" "$frontend_started_at"
 
-  gateway_started_at="$(timing_now)"
-  if ! zap_baseline gateway "$GATEWAY_HEALTH_URL"; then
-    dast_scan_failed=1
+  mv --no-clobber -- "$temporary_file" "$result_file" 2>/dev/null
+  if [[ -e "$temporary_file" ]]; then
+    rm -f -- "$temporary_file"
+    echo "Duplicate worker result rejected for ${api}." >&2
+    return 1
   fi
-  report_timing "Gateway baseline" "$gateway_started_at"
+}
 
-  authentication_started_at="$(timing_now)"
-  if configure_dast_jwt_token; then
-    auth_ready=1
+run_api_scan_worker() {
+  local api="$1"
+  local started_at
+  local elapsed_seconds
+  local high_count=0
+  local scan_status=0
+  local scan_success=false
+
+  SCAN_ERRORS=()
+  SECURITY_FINDINGS_HIGH=()
+  export ZAP_DOCKER_NAME="$(api_worker_container_name "$api")"
+  started_at="$(timing_now)"
+
+  if zap_api_scan "${api}-api" \
+    "${GATEWAY_TARGET_URL}${API_DOC_PATHS[$api]}" \
+    "${API_TARGET_URLS[$api]}"; then
+    scan_status=0
   else
-    dast_scan_failed=1
+    scan_status=$?
   fi
-  report_timing "authentication" "$authentication_started_at"
 
-  declare -A API_DOC_PATHS=(
-    [users]="/users/v3/api-docs"
-    [games]="/games/v3/api-docs"
-    [library]="/library/v3/api-docs"
-    [order]="/order/v3/api-docs"
-    [payment]="/payment/v3/api-docs"
-  )
+  elapsed_seconds="$(timing_elapsed_seconds "$started_at")"
+  if ! high_count="$(api_worker_high_count)"; then
+    SCAN_ERRORS+=("${api}-api: worker produced an invalid HIGH finding summary")
+    high_count=0
+    scan_status=1
+  fi
 
-  declare -A API_TARGET_URLS=(
-    [users]="${GATEWAY_TARGET_URL}"
-    [games]="${GATEWAY_TARGET_URL}"
-    [library]="${GATEWAY_TARGET_URL}"
-    [order]="${GATEWAY_TARGET_URL}"
-    [payment]="${GATEWAY_TARGET_URL}"
-  )
+  if (( ${#SCAN_ERRORS[@]} == 0 )) && \
+    { (( scan_status == 0 )) || (( scan_status == 1 && high_count > 0 )); }; then
+    scan_success=true
+  fi
 
-  if (( auth_ready )); then
-    for api in users games library order payment; do
-      api_started_at="$(timing_now)"
-      if ! zap_api_scan "${api}-api" "${GATEWAY_TARGET_URL}${API_DOC_PATHS[$api]}" "${API_TARGET_URLS[$api]}"; then
+  printf 'Timing: %s API scan = %ss\n' "$api" "$elapsed_seconds"
+  write_api_worker_result "$api" "$scan_success" "$high_count" "$scan_status" "$elapsed_seconds" || return 125
+  return "$scan_status"
+}
+
+launch_api_worker() {
+  local api="$1"
+  local pid
+
+  run_api_scan_worker "$api" &
+  pid=$!
+  API_WORKER_PIDS+=("$pid")
+  API_WORKER_API_BY_PID["$pid"]="$api"
+  printf 'Started authenticated API worker: api=%s pid=%s\n' "$api" "$pid"
+}
+
+reap_one_api_worker() {
+  local completed_pid=""
+  local completed_api
+  local worker_status
+  local pid
+  local -a remaining_pids=()
+
+  # Bash wait -n does not select jobs that completed before the call. Reap an
+  # already-finished worker first; otherwise block until the next completion.
+  for pid in "${API_WORKER_PIDS[@]}"; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      completed_pid="$pid"
+      if wait "$pid"; then
+        worker_status=0
+      else
+        worker_status=$?
+      fi
+      break
+    fi
+  done
+  if [[ -z "$completed_pid" ]]; then
+    if wait -n -p completed_pid; then
+      worker_status=0
+    else
+      worker_status=$?
+    fi
+  fi
+  completed_pid="${completed_pid:-}"
+
+  [[ -n "$completed_pid" && -n "${API_WORKER_API_BY_PID[$completed_pid]+x}" ]] || {
+    echo "Unable to map completed DAST API worker PID." >&2
+    return 1
+  }
+
+  completed_api="${API_WORKER_API_BY_PID[$completed_pid]}"
+  API_WORKER_STATUS_BY_API["$completed_api"]="$worker_status"
+  unset 'API_WORKER_API_BY_PID[$completed_pid]'
+  for pid in "${API_WORKER_PIDS[@]}"; do
+    [[ "$pid" == "$completed_pid" ]] || remaining_pids+=("$pid")
+  done
+  API_WORKER_PIDS=("${remaining_pids[@]}")
+  printf 'Completed authenticated API worker: api=%s exit_code=%s\n' "$completed_api" "$worker_status"
+}
+
+terminate_api_workers() {
+  local pid
+  local api
+  local container_name
+
+  for pid in "${API_WORKER_PIDS[@]:-}"; do
+    [[ -n "$pid" ]] || continue
+    api="${API_WORKER_API_BY_PID[$pid]:-}"
+    if [[ -n "$api" ]] && command -v docker >/dev/null 2>&1; then
+      container_name="$(api_worker_container_name "$api")"
+      docker rm --force "$container_name" >/dev/null 2>&1 || true
+    fi
+    kill "$pid" 2>/dev/null || true
+  done
+  for pid in "${API_WORKER_PIDS[@]:-}"; do
+    [[ -n "$pid" ]] || continue
+    wait "$pid" 2>/dev/null || true
+  done
+
+  API_WORKER_PIDS=()
+  API_WORKER_API_BY_PID=()
+}
+
+handle_dast_signal() {
+  local exit_status="$1"
+
+  trap - INT TERM
+  terminate_api_workers
+  exit "$exit_status"
+}
+
+report_api_batch_resources() {
+  local phase="$1"
+
+  printf 'DAST API batch resource diagnostics (%s):\n' "$phase"
+  if command -v free >/dev/null 2>&1; then
+    free -h || true
+  else
+    echo "free is unavailable; memory diagnostics skipped."
+  fi
+  if command -v nproc >/dev/null 2>&1; then
+    printf 'Available processors: '
+    nproc || true
+  else
+    echo "nproc is unavailable; CPU diagnostics skipped."
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    docker stats --no-stream \
+      --format 'container={{.Name}} cpu={{.CPUPerc}} memory={{.MemUsage}}' || true
+  else
+    echo "docker is unavailable; container diagnostics skipped."
+  fi
+}
+
+aggregate_api_worker_results() {
+  local api
+  local result_file
+  local result_api
+  local scan_success
+  local high_count
+  local exit_code
+  local elapsed_seconds
+  local actual_file_count
+  local batch_failed=0
+
+  actual_file_count="$(find "$API_WORKER_RESULT_DIR" -maxdepth 1 -type f | wc -l)"
+  if [[ "$actual_file_count" != "${#AUTHENTICATED_APIS[@]}" ]]; then
+    record_scan_error "api-worker-results" \
+      "expected ${#AUTHENTICATED_APIS[@]} result files, found ${actual_file_count}"
+    batch_failed=1
+  fi
+
+  for api in "${AUTHENTICATED_APIS[@]}"; do
+    result_file="${API_WORKER_RESULT_DIR}/${api}.json"
+    if [[ ! -s "$result_file" ]]; then
+      record_scan_error "${api}-api" "missing worker result"
+      batch_failed=1
+      continue
+    fi
+    if ! jq -e --arg expectedApi "$api" '
+      (keys | sort) == (["api", "elapsed_seconds", "exit_code", "high_count", "scan_success"] | sort)
+      and .api == $expectedApi
+      and (.scan_success | type) == "boolean"
+      and (.high_count | type) == "number"
+      and (.high_count | floor) == .high_count
+      and .high_count >= 0
+      and (.exit_code | type) == "number"
+      and (.exit_code | floor) == .exit_code
+      and .exit_code >= 0 and .exit_code <= 255
+      and (.elapsed_seconds | type) == "number"
+      and (.elapsed_seconds | floor) == .elapsed_seconds
+      and .elapsed_seconds >= 0
+    ' "$result_file" >/dev/null; then
+      record_scan_error "${api}-api" "malformed or unsafe worker result"
+      batch_failed=1
+      continue
+    fi
+
+    read -r result_api scan_success high_count exit_code elapsed_seconds < <(
+      jq -r '[.api, .scan_success, .high_count, .exit_code, .elapsed_seconds] | @tsv' "$result_file"
+    )
+    if [[ -z "${API_WORKER_STATUS_BY_API[$api]+x}" || \
+      "${API_WORKER_STATUS_BY_API[$api]}" != "$exit_code" ]]; then
+      record_scan_error "${api}-api" "worker exit status does not match its result"
+      batch_failed=1
+    fi
+    if [[ "$scan_success" != "true" ]]; then
+      record_scan_error "${api}-api" "worker reported scan failure, exit_code=${exit_code}"
+      batch_failed=1
+    elif (( exit_code != 0 && high_count == 0 )); then
+      record_scan_error "${api}-api" "worker returned non-zero without a HIGH finding"
+      batch_failed=1
+    fi
+    if (( high_count > 0 )); then
+      record_security_high "${api}-api" "$high_count"
+      batch_failed=1
+    fi
+    printf 'Authenticated API result: api=%s scan_success=%s high_count=%s exit_code=%s elapsed_seconds=%s\n' \
+      "$result_api" "$scan_success" "$high_count" "$exit_code" "$elapsed_seconds"
+  done
+
+  return "$batch_failed"
+}
+
+run_authenticated_api_batch() {
+  local batch_started_at
+  local next_api_index=0
+
+  validate_dast_api_parallelism || return 1
+  validate_unique_api_output_paths || return 1
+  prepare_api_worker_result_dir || return 1
+  API_WORKER_PIDS=()
+  API_WORKER_API_BY_PID=()
+  API_WORKER_STATUS_BY_API=()
+  batch_started_at="$(timing_now)"
+  report_api_batch_resources "before"
+
+  while (( next_api_index < ${#AUTHENTICATED_APIS[@]} || ${#API_WORKER_PIDS[@]} > 0 )); do
+    while (( next_api_index < ${#AUTHENTICATED_APIS[@]} && \
+      ${#API_WORKER_PIDS[@]} < DAST_API_PARALLELISM )); do
+      launch_api_worker "${AUTHENTICATED_APIS[$next_api_index]}"
+      next_api_index=$(( next_api_index + 1 ))
+    done
+    if (( ${#API_WORKER_PIDS[@]} > 0 )); then
+      if ! reap_one_api_worker; then
+        terminate_api_workers
+        record_scan_error "api-worker-pool" "failed to reap an authenticated API worker"
+        return 1
+      fi
+    fi
+  done
+
+  report_api_batch_resources "after"
+  report_timing "authenticated API parallel batch" "$batch_started_at"
+  aggregate_api_worker_results
+}
+
+main() {
+  local dast_scan_failed=0
+  local auth_ready=0
+  local network_started_at
+  local frontend_started_at
+  local gateway_started_at
+  local authentication_started_at
+
+  DAST_SCRIPT_STARTED_AT="$(timing_now)"
+  configure_candidate_images
+  ensure_jq
+  validate_dast_api_parallelism
+  prepare_zap_report_dir
+
+  if [[ "${DAST_STACK_READY:-false}" != "true" ]]; then
+    configure_runtime_environment
+    create_ci_compose_env_file
+    use_ci_dast_fixture_credentials
+    export COMPOSE_REPORT_NAME="dast"
+    # finish_dast preserves Compose log collection, stack teardown, and
+    # cleanup_ci_compose_env_file on every EXIT path.
+    trap finish_dast EXIT
+    trap 'handle_dast_signal 130' INT
+    trap 'handle_dast_signal 143' TERM
+    wait_for_application_stack
+  else
+    : "${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME must be set when DAST_STACK_READY=true}"
+    create_ci_compose_env_file
+    trap finish_dast EXIT
+    trap 'handle_dast_signal 130' INT
+    trap 'handle_dast_signal 143' TERM
+  fi
+
+  network_started_at="$(timing_now)"
+  if verify_zap_network_connectivity; then
+    report_timing "DAST network connectivity" "$network_started_at"
+    frontend_started_at="$(timing_now)"
+    if ! zap_frontend_full_scan client "$CLIENT_TARGET_URL"; then
+      dast_scan_failed=1
+    fi
+    report_timing "frontend full scan" "$frontend_started_at"
+
+    gateway_started_at="$(timing_now)"
+    if ! zap_baseline gateway "$GATEWAY_HEALTH_URL"; then
+      dast_scan_failed=1
+    fi
+    report_timing "Gateway baseline" "$gateway_started_at"
+
+    authentication_started_at="$(timing_now)"
+    if configure_dast_jwt_token; then
+      auth_ready=1
+    else
+      dast_scan_failed=1
+    fi
+    report_timing "authentication" "$authentication_started_at"
+
+    if (( auth_ready )); then
+      if ! run_authenticated_api_batch; then
         dast_scan_failed=1
       fi
-      report_timing "${api} API scan" "$api_started_at"
-    done
+    else
+      echo "Skipping authenticated API scans because DAST authentication failed." >&2
+    fi
   else
-    echo "Skipping authenticated API scans because DAST authentication failed." >&2
+    report_timing "DAST network connectivity" "$network_started_at"
+    dast_scan_failed=1
   fi
-else
-  report_timing "DAST network connectivity" "$network_started_at"
-  dast_scan_failed=1
-fi
 
-if (( dast_scan_failed )); then
-  if (( ${#SCAN_ERRORS[@]} > 0 )); then
-    printf 'SCAN_ERROR summary:\n' >&2
-    printf '  - %s\n' "${SCAN_ERRORS[@]}" >&2
+  if (( dast_scan_failed )); then
+    if (( ${#SCAN_ERRORS[@]} > 0 )); then
+      printf 'SCAN_ERROR summary:\n' >&2
+      printf '  - %s\n' "${SCAN_ERRORS[@]}" >&2
+    fi
+    if (( ${#SECURITY_FINDINGS_HIGH[@]} > 0 )); then
+      printf 'SECURITY_FINDING_HIGH summary:\n' >&2
+      printf '  - %s\n' "${SECURITY_FINDINGS_HIGH[@]}" >&2
+    fi
+    return 1
   fi
-  if (( ${#SECURITY_FINDINGS_HIGH[@]} > 0 )); then
-    printf 'SECURITY_FINDING_HIGH summary:\n' >&2
-    printf '  - %s\n' "${SECURITY_FINDINGS_HIGH[@]}" >&2
-  fi
-  exit 1
-fi
 
-echo "OWASP ZAP DAST completed with scan_success=true and high_count=0 for all targets."
+  echo "OWASP ZAP DAST completed with scan_success=true and high_count=0 for all targets."
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
