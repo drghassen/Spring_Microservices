@@ -823,22 +823,128 @@ test_aca_preflight_read_only_and_gated() {
   fi
 }
 
-test_circleci_environment_cli_capability() {
-  circleci() {
-    [[ "$*" == "run oidc get --help" ]] || return 1
-    printf '%s\n' 'Usage: circleci run oidc get --claims JSON'
-  }
+write_circleci_cli_mock() {
+  local executable="$1"
+  local supports_claims="$2"
 
-  aca_require_circleci_environment_cli >/dev/null
+  printf '%s\n' \
+    '#!/bin/bash' \
+    'set -euo pipefail' \
+    'if [[ -n "${MOCK_CIRCLECI_CALL_LOG:-}" ]]; then' \
+    '  printf "%s:%s\\n" "${0##*/}" "$*" >>"$MOCK_CIRCLECI_CALL_LOG"' \
+    'fi' \
+    'if [[ "$*" == "run oidc get --help" ]]; then' \
+    "  if [[ '$supports_claims' == true ]]; then" \
+    '    printf "%s\\n" "Usage: ${0##*/} run oidc get --claims JSON"' \
+    '    exit 0' \
+    '  fi' \
+    '  printf "%s\\n" "Trigger, watch and cancel CI runs"' \
+    '  exit 0' \
+    'fi' \
+    'if [[ "$*" == "run oidc get --claims {\"aud\":\"api://AzureADTokenExchange\"}" ]]; then' \
+    '  printf "%s\\n" "${MOCK_OIDC_TOKEN:-mock-oidc-token}"' \
+    '  exit 0' \
+    'fi' \
+    'exit 1' >"$executable"
+  chmod 700 "$executable"
 }
 
-test_circleci_local_cli_rejected() {
-  circleci() {
-    [[ "$*" == "run oidc get --help" ]] || return 1
-    printf '%s\n' 'Trigger, watch and cancel CI runs'
+test_circleci_agent_preferred_when_supported() {
+  local mock_directory original_path resolved
+  mock_directory="$(mktemp -d)"
+  original_path="$PATH"
+  write_circleci_cli_mock "${mock_directory}/circleci-agent" true
+
+  PATH="$mock_directory"
+  resolved="$(aca_resolve_circleci_environment_cli)"
+  PATH="$original_path"
+  [[ "$resolved" == "${mock_directory}/circleci-agent" ]]
+}
+
+test_circleci_agent_selected_over_incapable_local_cli() {
+  local mock_directory original_path resolved
+  mock_directory="$(mktemp -d)"
+  original_path="$PATH"
+  write_circleci_cli_mock "${mock_directory}/circleci" false
+  write_circleci_cli_mock "${mock_directory}/circleci-agent" true
+
+  PATH="$mock_directory"
+  resolved="$(aca_resolve_circleci_environment_cli)"
+  PATH="$original_path"
+  [[ "$resolved" == "${mock_directory}/circleci-agent" ]]
+}
+
+test_circleci_fallback_when_agent_unavailable() {
+  local mock_directory original_path resolved
+  mock_directory="$(mktemp -d)"
+  original_path="$PATH"
+  write_circleci_cli_mock "${mock_directory}/circleci" true
+
+  PATH="$mock_directory"
+  resolved="$(aca_resolve_circleci_environment_cli)"
+  PATH="$original_path"
+  [[ "$resolved" == "${mock_directory}/circleci" ]]
+}
+
+test_circleci_environment_cli_resolution_fails_closed() {
+  local mock_directory original_path status
+  mock_directory="$(mktemp -d)"
+  original_path="$PATH"
+  write_circleci_cli_mock "${mock_directory}/circleci" false
+  write_circleci_cli_mock "${mock_directory}/circleci-agent" false
+
+  PATH="$mock_directory"
+  status=0
+  aca_resolve_circleci_environment_cli || status=$?
+  PATH="$original_path"
+  return "$status"
+}
+
+test_oidc_authentication_uses_resolved_binary_without_logging_token() {
+  local call_log mock_directory oidc_token original_path output
+  mock_directory="$(mktemp -d)"
+  call_log="${mock_directory}/calls.log"
+  oidc_token='mock-sensitive-oidc-token'
+  original_path="$PATH"
+  write_circleci_cli_mock "${mock_directory}/circleci" false
+  write_circleci_cli_mock "${mock_directory}/circleci-agent" true
+
+  aca_validate_circleci_oidc_token_claims() {
+    [[ "$1" == "$oidc_token" ]]
+  }
+  az() {
+    case "${1:-} ${2:-}" in
+      "login --service-principal"|"account set") ;;
+      "account show")
+        if [[ "$*" == *"--query id"* ]]; then
+          printf '%s\n' "$AZURE_SUBSCRIPTION_ID"
+        elif [[ "$*" == *"--query tenantId"* ]]; then
+          printf '%s\n' "$AZURE_TENANT_ID"
+        else
+          return 1
+        fi
+        ;;
+      *) return 1 ;;
+    esac
   }
 
-  aca_require_circleci_environment_cli
+  CIRCLE_BRANCH=master
+  CIRCLE_PROJECT_USERNAME="$ACA_EXPECTED_CIRCLECI_PROJECT_USERNAME"
+  CIRCLE_PROJECT_REPONAME="$ACA_EXPECTED_CIRCLECI_PROJECT_REPONAME"
+  AZURE_CLIENT_ID=mock-client-id
+  AZURE_TENANT_ID=mock-tenant-id
+  AZURE_SUBSCRIPTION_ID=mock-subscription-id
+  MOCK_CIRCLECI_CALL_LOG="$call_log"
+  MOCK_OIDC_TOKEN="$oidc_token"
+  export MOCK_CIRCLECI_CALL_LOG MOCK_OIDC_TOKEN
+  PATH="$mock_directory"
+  output="$(aca_authenticate_with_circleci_oidc 2>&1)"
+
+  PATH="$original_path"
+  grep -Fqx 'circleci-agent:run oidc get --claims {"aud":"api://AzureADTokenExchange"}' \
+    "$call_log"
+  if grep -q '^circleci:run oidc get --claims' "$call_log"; then return 1; fi
+  [[ "$output" != *"$oidc_token"* ]]
 }
 
 test_circleci_environment_cli_not_overwritten() {
@@ -945,8 +1051,11 @@ assert_succeeds "OIDC state audit is read-only and does not infer write" test_oi
 assert_succeeds "CircleCI approval and stable serial group block concurrent deployment" test_circleci_serial_gate
 assert_succeeds "Terraform applies saved plans without automatic approval flag" test_terraform_apply_uses_saved_plan_without_automatic_approval_flag
 assert_succeeds "ACA preflight is read-only and gates plan-aca" test_aca_preflight_read_only_and_gated
-assert_succeeds "CircleCI environment CLI exposes custom-audience OIDC" test_circleci_environment_cli_capability
-assert_fails "CircleCI Local CLI is rejected for ACA OIDC" test_circleci_local_cli_rejected
+assert_succeeds "circleci-agent is selected when it supports custom-audience OIDC" test_circleci_agent_preferred_when_supported
+assert_succeeds "circleci-agent wins when circleci lacks --claims" test_circleci_agent_selected_over_incapable_local_cli
+assert_succeeds "circleci is selected when the agent command is unavailable" test_circleci_fallback_when_agent_unavailable
+assert_fails "CircleCI OIDC resolution fails closed when neither command supports --claims" test_circleci_environment_cli_resolution_fails_closed
+assert_succeeds "OIDC generation uses the resolved binary without logging the token" test_oidc_authentication_uses_resolved_binary_without_logging_token
 assert_succeeds "CircleCI environment CLI is never overwritten" test_circleci_environment_cli_not_overwritten
 assert_succeeds "CircleCI OIDC claims pass without readonly reassignment" test_oidc_claims_validation
 assert_fails "CircleCI OIDC token from an unexpected branch is rejected" test_oidc_wrong_branch_rejected

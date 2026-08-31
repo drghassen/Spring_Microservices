@@ -47,20 +47,40 @@ aca_require_command() {
   }
 }
 
-aca_require_circleci_environment_cli() {
+aca_circleci_environment_cli_supports_custom_audience() {
+  local executable="$1"
   local oidc_help
 
-  aca_require_command circleci
-  if ! oidc_help="$(circleci run oidc get --help 2>&1)" || \
-    [[ "$oidc_help" != *"--claims"* ]]; then
-    cat >&2 <<'EOF'
-CircleCI's task-agent environment CLI with custom-audience OIDC support is required.
-Do not replace it with the similarly named CircleCI Local CLI.
-EOF
-    return 1
-  fi
+  [[ -x "$executable" ]] || return 1
+  oidc_help="$("$executable" run oidc get --help 2>&1)" || return 1
+  [[ "$oidc_help" == *"--claims"* ]]
+}
 
-  echo "CircleCI environment CLI supports custom-audience OIDC."
+aca_resolve_circleci_environment_cli() {
+  local candidate
+  local executable
+
+  for candidate in circleci-agent circleci; do
+    executable="$(command -v "$candidate" 2>/dev/null)" || continue
+    if aca_circleci_environment_cli_supports_custom_audience "$executable"; then
+      printf '%s\n' "$executable"
+      return 0
+    fi
+  done
+
+  cat >&2 <<'EOF'
+CircleCI's task-agent environment CLI with custom-audience OIDC support is required.
+Neither circleci-agent nor circleci provides `run oidc get --claims`.
+Do not replace the task-agent command with the similarly named CircleCI Local CLI.
+EOF
+  return 1
+}
+
+aca_require_circleci_environment_cli() {
+  local executable
+
+  executable="$(aca_resolve_circleci_environment_cli)" || return 1
+  printf 'CircleCI environment CLI supports custom-audience OIDC: %s\n' "$executable"
 }
 
 aca_validate_circleci_oidc_token_claims() {
@@ -109,6 +129,7 @@ PY
 }
 
 aca_authenticate_with_circleci_oidc() {
+  local circleci_environment_cli
   local oidc_token
   local selected_subscription_id
   local selected_tenant_id
@@ -123,9 +144,11 @@ aca_authenticate_with_circleci_oidc() {
     exit 1
   }
 
-  aca_require_circleci_environment_cli
+  circleci_environment_cli="$(aca_resolve_circleci_environment_cli)" || exit 1
+  printf 'CircleCI environment CLI supports custom-audience OIDC: %s\n' \
+    "$circleci_environment_cli"
   if ! oidc_token="$(
-    circleci run oidc get \
+    "$circleci_environment_cli" run oidc get \
       --claims '{"aud":"api://AzureADTokenExchange"}'
   )"; then
     echo "CircleCI failed to issue a custom-audience OIDC token." >&2
