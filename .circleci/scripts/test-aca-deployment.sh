@@ -151,7 +151,7 @@ populate_digest_maps() {
 }
 
 test_initial_rollout() {
-  local event_file="${TMPDIR:-/tmp}/aca-initial-events" output_file
+  local event_file="${TMPDIR:-/tmp}/aca-initial-events" output_file rollout_phases
   : >"$event_file"
   output_file="$(mktemp)"
   populate_digest_maps
@@ -176,6 +176,9 @@ test_initial_rollout() {
   grep -Fxq "plan:payment-service:${PAYMENT_ACTIVE_APPLICATIONS}" "$event_file"
   grep -Fxq "plan:user-service:${BUSINESS_ACTIVE_APPLICATIONS}" "$event_file"
   grep -Fxq "plan:client:${ALL_ACTIVE_APPLICATIONS}" "$event_file"
+  rollout_phases="$(grep '^plan:' "$event_file" | cut -d: -f2 | tail -n 9)"
+  [[ "$(grep -c '^plan:' "$event_file")" == 11 ]]
+  [[ "$rollout_phases" == $'config-server\ndiscovery-service\ngateway\ngames-service\nlibrary-service\norder-service\npayment-service\nuser-service\nclient' ]]
   grep -Eq '^Timing: complete ACA deployment = [0-9]+s$' "$output_file"
   [[ "$(grep -c '^migration$' "$event_file")" == 1 ]]
   [[ "$(grep -n '^migration$' "$event_file" | cut -d: -f1)" -lt \
@@ -184,9 +187,9 @@ test_initial_rollout() {
 }
 
 test_redeploy_migration_gate() {
-  local event_file="${TMPDIR:-/tmp}/aca-redeploy-events"
+  local event_file="${TMPDIR:-/tmp}/aca-redeploy-events" rollout_phases
   local migration_complete=0
-  local changed_application changed_count
+  local candidate_application changed_count
   local -A simulated_application_digests=()
   : >"$event_file"
   populate_digest_maps
@@ -194,51 +197,51 @@ test_redeploy_migration_gate() {
   copy_digest_map CURRENT_APPLICATION_DIGESTS ROLLOUT_APPLICATION_DIGESTS
   copy_digest_map CURRENT_APPLICATION_DIGESTS simulated_application_digests
   safe_plan_and_apply() {
-    local candidate_application
     if ((migration_complete == 0)); then
       for candidate_application in "${ACA_APPLICATIONS[@]}"; do
         [[ "${ROLLOUT_APPLICATION_DIGESTS[$candidate_application]}" == \
           "${CURRENT_APPLICATION_DIGESTS[$candidate_application]}" ]]
       done
     elif [[ "$1" != "infrastructure-bootstrap" && "$1" != "migration-job" ]]; then
-      changed_application=""
       changed_count=0
       for candidate_application in "${ACA_APPLICATIONS[@]}"; do
         if [[ "${ROLLOUT_APPLICATION_DIGESTS[$candidate_application]}" != \
           "${simulated_application_digests[$candidate_application]}" ]]; then
-          changed_application="$candidate_application"
           changed_count=$((changed_count + 1))
+          simulated_application_digests["$candidate_application"]="${ROLLOUT_APPLICATION_DIGESTS[$candidate_application]}"
         fi
       done
-      [[ "$changed_count" == 1 && "$changed_application" == "$1" ]]
-      simulated_application_digests["$1"]="${ROLLOUT_APPLICATION_DIGESTS[$1]}"
+      if [[ "$1" == "business-services" ]]; then
+        [[ "$changed_count" == "${#BUSINESS_REDEPLOY_APPLICATIONS[@]}" ]]
+        [[ "$(jq -cS . <<<"$7")" == \
+          "$(jq -cnS --args '$ARGS.positional' "${BUSINESS_REDEPLOY_APPLICATIONS[@]}")" ]]
+      else
+        [[ "$changed_count" == 1 ]]
+      fi
     fi
     printf 'plan:%s:%s\n' "$1" "$5" >>"$event_file"
   }
   run_database_migrations() { migration_complete=1; printf '%s\n' migration >>"$event_file"; }
   latest_revision_name() { printf '%s-revision\n' "$1"; }
   wait_for_healthy_revision() { printf 'healthy:%s\n' "$1" >>"$event_file"; }
-  run_post_deployment_health_checks() { :; }
-  run_deployment >/dev/null
-  while IFS= read -r phase; do
-    grep -Fxq "plan:${phase}:${ALL_ACTIVE_APPLICATIONS}" "$event_file"
-  done <<'EOF'
-infrastructure-bootstrap
-migration-job
-config-server
-discovery-service
-gateway
-games-service
-library-service
-order-service
-payment-service
-user-service
-client
-EOF
+  run_post_deployment_health_checks() { printf '%s\n' post-health >>"$event_file"; }
+  run_deployment >"${TMPDIR:-/tmp}/aca-redeploy-output"
+  rollout_phases="$(grep '^plan:' "$event_file" | cut -d: -f2 | tail -n 5)"
+  [[ "$(grep -c '^plan:' "$event_file")" == 7 ]]
+  [[ "$rollout_phases" == $'config-server\ndiscovery-service\ngateway\nbusiness-services\nclient' ]]
+  [[ "$(grep -Fc ":${ALL_ACTIVE_APPLICATIONS}" "$event_file")" == 7 ]]
   [[ "$(grep -c '^migration$' "$event_file")" == 1 ]]
   [[ "$(grep -c '^healthy:' "$event_file")" == 9 ]]
   [[ "$(grep -n '^migration$' "$event_file" | cut -d: -f1)" -lt \
     "$(grep -n '^healthy:config-server$' "$event_file" | cut -d: -f1)" ]]
+  [[ "$(grep -n '^healthy:gateway$' "$event_file" | cut -d: -f1)" -lt \
+    "$(grep -n '^healthy:games-service$' "$event_file" | cut -d: -f1)" ]]
+  [[ "$(grep -n '^healthy:order-service$' "$event_file" | cut -d: -f1)" -lt \
+    "$(grep -n '^healthy:client$' "$event_file" | cut -d: -f1)" ]]
+  [[ "$(grep -n '^healthy:client$' "$event_file" | cut -d: -f1)" -lt \
+    "$(grep -n '^post-health$' "$event_file" | cut -d: -f1)" ]]
+  grep -Eq '^Timing: business-services rollout = [0-9]+s$' \
+    "${TMPDIR:-/tmp}/aca-redeploy-output"
 }
 
 test_revision_health_condition() {
@@ -249,6 +252,7 @@ test_revision_health_condition() {
         healthy | wrong-ready) printf '%s\n%s\n' Healthy Provisioned ;;
         unhealthy) printf '%s\n%s\n' Unhealthy Provisioned ;;
         failed) printf '%s\n%s\n' Healthy Failed ;;
+        non-provisioned) printf '%s\n%s\n' Healthy Provisioning ;;
       esac
     else
       if [[ "$condition" == "wrong-ready" ]]; then
@@ -327,6 +331,129 @@ test_changed_plan_applies_exact_saved_plan() {
   [[ "$planned" == 1 && "$applied" == 1 ]]
 }
 
+test_business_wave_single_saved_plan_apply() {
+  local planned=0 applied=0 application
+  local event_file expected_allowlist
+  event_file="$(mktemp)"
+  populate_digest_maps
+  copy_digest_map CURRENT_APPLICATION_DIGESTS ROLLOUT_APPLICATION_DIGESTS
+  expected_allowlist='["games-service","library-service","payment-service","user-service","order-service"]'
+  [[ "${BUSINESS_REDEPLOY_APPLICATIONS[*]}" == \
+    "games-service library-service payment-service user-service order-service" ]]
+  create_safe_plan() {
+    planned=$((planned + 1))
+    [[ "$1" == "business-services" ]]
+    [[ "$2" == "Business services revisions" ]]
+    [[ "$5" == "$ALL_ACTIVE_APPLICATIONS" ]]
+    [[ "$(jq -c . <<<"$7")" == "$expected_allowlist" ]]
+    LAST_PLAN_FILE='/tmp/business-services-fixture.tfplan'
+    LAST_PLAN_ADD_COUNT=0
+    LAST_PLAN_CHANGE_COUNT=5
+    LAST_PLAN_DESTROY_COUNT=0
+  }
+  apply_validated_plan() {
+    [[ "$1" == "Business services revisions" ]]
+    [[ "$LAST_PLAN_FILE" == '/tmp/business-services-fixture.tfplan' ]]
+    applied=$((applied + 1))
+  }
+  latest_revision_name() {
+    printf 'capture:%s\n' "$1" >>"$event_file"
+    printf '%s-revision\n' "$1"
+  }
+  wait_for_healthy_revision() {
+    [[ "$2" == "$1-revision" ]]
+    printf 'healthy:%s\n' "$1" >>"$event_file"
+  }
+
+  deploy_application_wave business-services "Business services revisions" \
+    "${BUSINESS_REDEPLOY_APPLICATIONS[@]}"
+
+  [[ "$planned" == 1 && "$applied" == 1 ]]
+  [[ "$(grep -c '^capture:' "$event_file")" == 5 ]]
+  [[ "$(grep -c '^healthy:' "$event_file")" == 5 ]]
+  [[ "$(grep '^healthy:' "$event_file" | cut -d: -f2)" == \
+    $'games-service\nlibrary-service\npayment-service\nuser-service\norder-service' ]]
+  for application in "${BUSINESS_REDEPLOY_APPLICATIONS[@]}"; do
+    [[ "${ROLLOUT_APPLICATION_DIGESTS[$application]}" == \
+      "${DESIRED_APPLICATION_DIGESTS[$application]}" ]]
+  done
+  [[ "${ROLLOUT_APPLICATION_DIGESTS[client]}" == \
+    "${CURRENT_APPLICATION_DIGESTS[client]}" ]]
+}
+
+test_business_wave_zero_change_skips_apply() {
+  local planned=0 applied=0 revision_queries=0 waits=0
+  populate_digest_maps
+  copy_digest_map DESIRED_APPLICATION_DIGESTS ROLLOUT_APPLICATION_DIGESTS
+  create_safe_plan() {
+    planned=$((planned + 1))
+    [[ "$7" == '[]' ]]
+    LAST_PLAN_ADD_COUNT=0
+    LAST_PLAN_CHANGE_COUNT=0
+    LAST_PLAN_DESTROY_COUNT=0
+  }
+  apply_validated_plan() { applied=$((applied + 1)); }
+  latest_revision_name() { revision_queries=$((revision_queries + 1)); }
+  wait_for_healthy_revision() { waits=$((waits + 1)); }
+
+  deploy_application_wave business-services "Business services revisions" \
+    "${BUSINESS_REDEPLOY_APPLICATIONS[@]}" >/dev/null
+  [[ "$planned" == 1 && "$applied" == 0 ]]
+  [[ "$revision_queries" == 0 && "$waits" == 0 ]]
+}
+
+test_business_wave_partial_change_waits_only_changed() {
+  local event_file application
+  event_file="$(mktemp)"
+  populate_digest_maps
+  copy_digest_map DESIRED_APPLICATION_DIGESTS ROLLOUT_APPLICATION_DIGESTS
+  ROLLOUT_APPLICATION_DIGESTS[client]="${CURRENT_APPLICATION_DIGESTS[client]}"
+  for application in library-service payment-service order-service; do
+    ROLLOUT_APPLICATION_DIGESTS["$application"]="${CURRENT_APPLICATION_DIGESTS[$application]}"
+  done
+  safe_plan_and_apply() {
+    [[ "$1" == "business-services" && "$5" == "$ALL_ACTIVE_APPLICATIONS" ]]
+    [[ "$(jq -c . <<<"$7")" == \
+      '["library-service","payment-service","order-service"]' ]]
+  }
+  latest_revision_name() { printf '%s-revision\n' "$1"; }
+  wait_for_healthy_revision() { printf '%s\n' "$1" >>"$event_file"; }
+
+  deploy_application_wave business-services "Business services revisions" \
+    "${BUSINESS_REDEPLOY_APPLICATIONS[@]}"
+
+  [[ "$(cat "$event_file")" == $'library-service\npayment-service\norder-service' ]]
+  for application in "${BUSINESS_REDEPLOY_APPLICATIONS[@]}"; do
+    [[ "${ROLLOUT_APPLICATION_DIGESTS[$application]}" == \
+      "${DESIRED_APPLICATION_DIGESTS[$application]}" ]]
+  done
+  [[ "${ROLLOUT_APPLICATION_DIGESTS[client]}" == \
+    "${CURRENT_APPLICATION_DIGESTS[client]}" ]]
+}
+
+test_business_wave_one_failed_revision_fails_wave() {
+  populate_digest_maps
+  copy_digest_map CURRENT_APPLICATION_DIGESTS ROLLOUT_APPLICATION_DIGESTS
+  safe_plan_and_apply() { :; }
+  latest_revision_name() { printf '%s-revision\n' "$1"; }
+  wait_for_healthy_revision() {
+    [[ "$1" != "payment-service" ]]
+  }
+
+  deploy_application_wave business-services "Business services revisions" \
+    "${BUSINESS_REDEPLOY_APPLICATIONS[@]}"
+}
+
+test_no_concurrent_terraform_apply() {
+  local apply_function
+  apply_function="$(sed -n '/^apply_validated_plan()/,/^}/p' "$DEPLOY_SCRIPT")"
+  [[ "$(grep -Fc 'terraform -chdir="$ACA_TERRAFORM_DIRECTORY" apply \' \
+    <<<"$apply_function")" == 1 ]]
+  if grep -Eq '(^|[[:space:]])wait([[:space:]]|$)|&[[:space:]]*$' <<<"$apply_function"; then
+    return 1
+  fi
+}
+
 test_timing_diagnostics_exclude_arguments() {
   local output sensitive_value='fixture-sensitive-timing-value-never-print'
   timed_fixture() {
@@ -386,6 +513,38 @@ test_application_image_update_after_migration_allowed() {
     '{"template":[{"container":[{"image":"fixture-current"}]}]}' \
     '{"template":[{"container":[{"image":"fixture-candidate"}]}]}' '{}' '{}'
   inspect_plan_json "$fixture" application-rollout none
+}
+
+test_business_wave_unexpected_client_change_refused() {
+  local fixture allowed_applications
+  fixture="$(mktemp)"
+  allowed_applications='["games-service","library-service","payment-service","user-service","order-service"]'
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.apps.azurerm_container_app.this["client"]' \
+    '{"template":[{"container":[{"image":"fixture-current"}]}]}' \
+    '{"template":[{"container":[{"image":"fixture-candidate"}]}]}' '{}' '{}'
+  inspect_plan_json "$fixture" business-services none "$allowed_applications"
+}
+
+test_business_wave_intended_update_allowed() {
+  local fixture allowed_applications
+  fixture="$(mktemp)"
+  allowed_applications='["games-service","library-service","payment-service","user-service","order-service"]'
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.apps.azurerm_container_app.this["games-service"]' \
+    '{"template":[{"container":[{"image":"fixture-current"}]}]}' \
+    '{"template":[{"container":[{"image":"fixture-candidate"}]}]}' '{}' '{}'
+  inspect_plan_json "$fixture" business-services none "$allowed_applications"
+}
+
+test_business_wave_foundation_update_refused() {
+  local fixture allowed_applications
+  fixture="$(mktemp)"
+  allowed_applications='["games-service","library-service","payment-service","user-service","order-service"]'
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.foundation.azurerm_log_analytics_workspace.this' \
+    '{"retention_in_days":30}' '{"retention_in_days":60}' '{}' '{}'
+  inspect_plan_json "$fixture" business-services none "$allowed_applications"
 }
 
 test_migration_job_image_update_before_migration_allowed() {
@@ -751,13 +910,22 @@ assert_succeeds "exact ready revision with Healthy and Provisioned passes" test_
 assert_fails "wrong latest-ready revision does not pass" test_revision_health_condition wrong-ready
 assert_fails "Unhealthy expected revision stops release" test_revision_health_condition unhealthy
 assert_fails "Failed provisioning stops release" test_revision_health_condition failed
+assert_fails "non-Provisioned expected revision does not pass" test_revision_health_condition non-provisioned
 assert_succeeds "post-deployment validation retains exactly both public HTTP checks" test_post_deployment_http_checks_only
 assert_succeeds "deployment-time container exec check is absent" test_no_deployment_exec_check_remains
 assert_succeeds "zero-change validated plan skips Terraform apply" test_zero_change_plan_skips_apply
 assert_succeeds "changed validated plan applies the exact saved plan" test_changed_plan_applies_exact_saved_plan
+assert_succeeds "business wave uses one saved plan, at most one apply, and verifies all five apps" test_business_wave_single_saved_plan_apply
+assert_succeeds "zero-change business wave skips apply and revision waits" test_business_wave_zero_change_skips_apply
+assert_succeeds "partially changed business wave waits only for changed apps" test_business_wave_partial_change_waits_only_changed
+assert_fails "one failed business revision fails the complete wave" test_business_wave_one_failed_revision_fails_wave
+assert_succeeds "Terraform apply remains single-process and foreground" test_no_concurrent_terraform_apply
 assert_succeeds "timing diagnostics expose no command arguments" test_timing_diagnostics_exclude_arguments
 assert_succeeds "normal redeploy with unchanged applications passes pre-migration" test_normal_redeploy_no_changes
 assert_succeeds "application image update is allowed only after migration" test_application_image_update_after_migration_allowed
+assert_succeeds "business wave allows an intended business app update" test_business_wave_intended_update_allowed
+assert_fails "business wave refuses an unexpected client update" test_business_wave_unexpected_client_change_refused
+assert_fails "business wave refuses an unexpected foundation update" test_business_wave_foundation_update_refused
 assert_succeeds "migration-job image update is allowed before migration" test_migration_job_image_update_before_migration_allowed
 assert_fails "application image update before migration is refused" test_pre_migration_attribute_refusal image
 assert_fails "application scaling update before migration is refused" test_pre_migration_attribute_refusal scaling

@@ -21,6 +21,13 @@ readonly ORDER_ACTIVE_APPLICATIONS='["config-server","discovery-service","gatewa
 readonly PAYMENT_ACTIVE_APPLICATIONS='["config-server","discovery-service","gateway","games-service","library-service","order-service","payment-service"]'
 readonly BUSINESS_ACTIVE_APPLICATIONS='["config-server","discovery-service","gateway","games-service","library-service","order-service","payment-service","user-service"]'
 readonly ALL_ACTIVE_APPLICATIONS='["client","config-server","discovery-service","gateway","games-service","library-service","order-service","payment-service","user-service"]'
+readonly -a BUSINESS_REDEPLOY_APPLICATIONS=(
+  games-service
+  library-service
+  payment-service
+  user-service
+  order-service
+)
 
 readonly ACA_REQUIRED_STATE_ADDRESSES=(
   'data.azurerm_container_registry.current'
@@ -441,7 +448,9 @@ print_changed_resources() {
 
 inspect_plan_json() {
   local plan_json="$1" phase_name="$2" allowed_create_scope="$3"
+  local allowed_application_updates="${4:-null}"
   local plan_summary replacement_count unexpected_create_count unexpected_app_change_count
+  local unexpected_update_count
   if ! plan_summary="$(jq -er ' [.resource_changes[]?.change.actions] as $actions | [
       ([$actions[] | select(index("create") != null)] | length),
       ([$actions[] | select(index("update") != null)] | length),
@@ -499,11 +508,36 @@ inspect_plan_json() {
       return 1
     fi
   fi
+
+  if ! unexpected_update_count="$(jq -er --argjson allowed "$allowed_application_updates" '
+    if $allowed == null then
+      0
+    elif (($allowed | type) == "array"
+      and all($allowed[]; type == "string")
+      and (($allowed | unique | length) == ($allowed | length))) then
+      ($allowed | map("module.apps.azurerm_container_app.this[\"" + . + "\"]")) as $addresses
+      | [.resource_changes[]?
+          | select(.change.actions != ["no-op"])
+          | select(.address as $address | ($addresses | index($address)) == null)]
+      | length
+    else
+      error("invalid application update allowlist")
+    end
+  ' "$plan_json" 2>/dev/null)"; then
+    echo "Unable to inspect allowed Container App updates safely; operation refused." >&2
+    return 1
+  fi
+  if ((unexpected_update_count != 0)); then
+    printf 'Change outside the allowed Container Apps detected in phase %s; operation refused.\n' \
+      "$phase_name" >&2
+    return 1
+  fi
 }
 
 create_safe_plan() {
   local phase_slug="$1" phase_name="$2" digest_map_name="$3"
   local migration_digest="$4" active_applications="$5" allowed_create_scope="$6"
+  local allowed_application_updates="${7:-null}"
   local application_digests_json plan_json plan_log plan_exit
   local -a secret_var_file_argument=()
   application_digests_json="$(digests_as_json "$digest_map_name")"
@@ -532,7 +566,8 @@ create_safe_plan() {
     exit 1
   fi
   terraform -chdir="$ACA_TERRAFORM_DIRECTORY" show -json "$LAST_PLAN_FILE" >"$plan_json"
-  inspect_plan_json "$plan_json" "$phase_name" "$allowed_create_scope"
+  inspect_plan_json "$plan_json" "$phase_name" "$allowed_create_scope" \
+    "$allowed_application_updates"
 }
 
 apply_validated_plan() {
@@ -662,17 +697,52 @@ wait_for_healthy_revision() {
 
 deploy_application_phase() {
   local phase_slug="$1" phase_name="$2" active_applications="$3" application="$4"
-  local expected_revision
+  local expected_revision allowed_application_updates
   if [[ "$DETECTED_RELEASE_MODE" == "redeploy" ]]; then
     active_applications="$ALL_ACTIVE_APPLICATIONS"
   fi
   # The plan helper reads this associative map by its variable name.
   # shellcheck disable=SC2034
   ROLLOUT_APPLICATION_DIGESTS["$application"]="${DESIRED_APPLICATION_DIGESTS[$application]}"
+  allowed_application_updates="$(jq -cn --arg application "$application" '[$application]')"
   safe_plan_and_apply "$phase_slug" "$phase_name" ROLLOUT_APPLICATION_DIGESTS \
-    "$DESIRED_MIGRATION_DIGEST" "$active_applications" none
+    "$DESIRED_MIGRATION_DIGEST" "$active_applications" none "$allowed_application_updates"
   expected_revision="$(latest_revision_name "$application")"
   wait_for_healthy_revision "$application" "$expected_revision"
+}
+
+deploy_application_wave() {
+  local phase_slug="$1" phase_name="$2"
+  local application allowed_application_updates
+  local -a applications=() changed_applications=()
+  local -A expected_revisions=()
+  shift 2
+  applications=("$@")
+
+  for application in "${applications[@]}"; do
+    if [[ "${ROLLOUT_APPLICATION_DIGESTS[$application]}" != \
+      "${DESIRED_APPLICATION_DIGESTS[$application]}" ]]; then
+      changed_applications+=("$application")
+    fi
+    # The plan helper reads this associative map by its variable name.
+    # shellcheck disable=SC2034
+    ROLLOUT_APPLICATION_DIGESTS["$application"]="${DESIRED_APPLICATION_DIGESTS[$application]}"
+  done
+
+  allowed_application_updates="$(jq -cn --args '$ARGS.positional' \
+    "${changed_applications[@]}")"
+  safe_plan_and_apply "$phase_slug" "$phase_name" ROLLOUT_APPLICATION_DIGESTS \
+    "$DESIRED_MIGRATION_DIGEST" "$ALL_ACTIVE_APPLICATIONS" none \
+    "$allowed_application_updates"
+
+  for application in "${changed_applications[@]}"; do
+    expected_revisions["$application"]="$(latest_revision_name "$application")"
+  done
+  for application in "${changed_applications[@]}"; do
+    if ! wait_for_healthy_revision "$application" "${expected_revisions[$application]}"; then
+      return 1
+    fi
+  done
 }
 
 assert_public_http_status() {
@@ -824,16 +894,22 @@ run_deployment() {
     discovery-service "Discovery revision" "$DISCOVERY_ACTIVE_APPLICATIONS" discovery-service
   run_timed_phase "gateway rollout" deploy_application_phase \
     gateway "Gateway revision" "$GATEWAY_ACTIVE_APPLICATIONS" gateway
-  run_timed_phase "games-service rollout" deploy_application_phase \
-    games-service "Games service revision" "$GAMES_ACTIVE_APPLICATIONS" games-service
-  run_timed_phase "library-service rollout" deploy_application_phase \
-    library-service "Library service revision" "$LIBRARY_ACTIVE_APPLICATIONS" library-service
-  run_timed_phase "order-service rollout" deploy_application_phase \
-    order-service "Order service revision" "$ORDER_ACTIVE_APPLICATIONS" order-service
-  run_timed_phase "payment-service rollout" deploy_application_phase \
-    payment-service "Payment service revision" "$PAYMENT_ACTIVE_APPLICATIONS" payment-service
-  run_timed_phase "user-service rollout" deploy_application_phase \
-    user-service "User service revision" "$BUSINESS_ACTIVE_APPLICATIONS" user-service
+  if [[ "$DETECTED_RELEASE_MODE" == "redeploy" ]]; then
+    run_timed_phase "business-services rollout" deploy_application_wave \
+      business-services "Business services revisions" \
+      "${BUSINESS_REDEPLOY_APPLICATIONS[@]}"
+  else
+    run_timed_phase "games-service rollout" deploy_application_phase \
+      games-service "Games service revision" "$GAMES_ACTIVE_APPLICATIONS" games-service
+    run_timed_phase "library-service rollout" deploy_application_phase \
+      library-service "Library service revision" "$LIBRARY_ACTIVE_APPLICATIONS" library-service
+    run_timed_phase "order-service rollout" deploy_application_phase \
+      order-service "Order service revision" "$ORDER_ACTIVE_APPLICATIONS" order-service
+    run_timed_phase "payment-service rollout" deploy_application_phase \
+      payment-service "Payment service revision" "$PAYMENT_ACTIVE_APPLICATIONS" payment-service
+    run_timed_phase "user-service rollout" deploy_application_phase \
+      user-service "User service revision" "$BUSINESS_ACTIVE_APPLICATIONS" user-service
+  fi
   run_timed_phase "client rollout" deploy_application_phase \
     client "Client revision and complete application set" "$ALL_ACTIVE_APPLICATIONS" client
   run_timed_phase "public HTTP checks" run_post_deployment_health_checks
