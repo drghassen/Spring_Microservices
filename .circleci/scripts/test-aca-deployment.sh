@@ -201,7 +201,7 @@ test_revision_health_failure() {
   local application="$1"
   az() {
     if [[ "$*" == *"revision show"* ]]; then
-      printf '%s\t%s\n' Unhealthy Provisioned
+      printf '%s\n%s\n' Unhealthy Provisioned
     else
       printf '%s\n' "${application}-revision"
     fi
@@ -209,18 +209,113 @@ test_revision_health_failure() {
   wait_for_healthy_revision "$application" "${application}-revision"
 }
 
+test_multiline_revision_parsing() {
+  local -a revision_details=()
+
+  parse_exact_required_tsv_lines 3 $'Healthy\nProvisioned\nexample.azurecr.io/app@sha256:fixture' \
+    revision_details
+  [[ "${revision_details[0]}" == "Healthy" ]]
+  [[ "${revision_details[1]}" == "Provisioned" ]]
+  [[ "${revision_details[2]}" == "example.azurecr.io/app@sha256:fixture" ]]
+}
+
 write_plan_fixture() {
-  local file="$1" actions="$2" address="${3:-module.apps.azurerm_container_app.this[\"client\"]}"
-  jq -n --arg address "$address" --argjson actions "$actions" '{
+  local file="$1" actions="$2"
+  local address="${3:-module.apps.azurerm_container_app.this[\"client\"]}"
+  local before after before_sensitive after_sensitive
+  if (( $# >= 7 )); then
+    before="$4"
+    after="$5"
+    before_sensitive="$6"
+    after_sensitive="$7"
+  else
+    before='{"secret":"fixture-before-never-print"}'
+    after='{"secret":"fixture-after-never-print"}'
+    before_sensitive='{"secret":true}'
+    after_sensitive='{"secret":true}'
+  fi
+  jq -n --arg address "$address" --argjson actions "$actions" \
+    --argjson before "$before" --argjson after "$after" \
+    --argjson before_sensitive "$before_sensitive" \
+    --argjson after_sensitive "$after_sensitive" '{
     resource_changes: [{
       address: $address,
       change: {
         actions: $actions,
-        after_sensitive: {secret: true},
-        after: {secret: "fixture-value-never-print"}
+        before: $before,
+        after: $after,
+        before_sensitive: $before_sensitive,
+        after_sensitive: $after_sensitive
       }
     }]
   }' >"$file"
+}
+
+test_normal_redeploy_no_changes() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["no-op"]' \
+    'module.apps.azurerm_container_app.this["client"]' '{}' '{}' '{}' '{}'
+  inspect_plan_json "$fixture" normal-redeploy pre-migration
+}
+
+test_application_image_update_after_migration_allowed() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.apps.azurerm_container_app.this["client"]' \
+    '{"template":[{"container":[{"image":"fixture-current"}]}]}' \
+    '{"template":[{"container":[{"image":"fixture-candidate"}]}]}' '{}' '{}'
+  inspect_plan_json "$fixture" application-rollout none
+}
+
+test_migration_job_image_update_before_migration_allowed() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.apps.azurerm_container_app_job.database_migrations' \
+    '{"template":[{"container":[{"image":"fixture-current"}]}]}' \
+    '{"template":[{"container":[{"image":"fixture-candidate"}]}]}' '{}' '{}'
+  inspect_plan_json "$fixture" migration-job pre-migration
+}
+
+test_pre_migration_attribute_refusal() {
+  local attribute="$1" fixture before after
+  fixture="$(mktemp)"
+  case "$attribute" in
+    image)
+      before='{"template":[{"container":[{"image":"fixture-current"}]}]}'
+      after='{"template":[{"container":[{"image":"fixture-candidate"}]}]}'
+      ;;
+    scaling)
+      before='{"template":[{"min_replicas":1,"max_replicas":2}]}'
+      after='{"template":[{"min_replicas":0,"max_replicas":2}]}'
+      ;;
+    ingress)
+      before='{"ingress":[{"external_enabled":false,"target_port":8080}]}'
+      after='{"ingress":[{"external_enabled":true,"target_port":8080}]}'
+      ;;
+    probe)
+      before='{"template":[{"container":[{"readiness_probe":[{"path":"/health"}]}]}]}'
+      after='{"template":[{"container":[{"readiness_probe":[{"path":"/ready"}]}]}]}'
+      ;;
+    secret)
+      before='{"secret":[{"name":"fixture","value":"fixture-before-never-print"}]}'
+      after='{"secret":[{"name":"fixture","value":"fixture-after-never-print"}]}'
+      write_plan_fixture "$fixture" '["update"]' \
+        'module.apps.azurerm_container_app.this["config-server"]' \
+        "$before" "$after" '{"secret":true}' '{"secret":true}'
+      inspect_plan_json "$fixture" "pre-migration-${attribute}" pre-migration
+      return
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.apps.azurerm_container_app.this["client"]' \
+    "$before" "$after" '{}' '{}'
+  inspect_plan_json "$fixture" "pre-migration-${attribute}" pre-migration
 }
 
 test_plan_delete_refusal() {
@@ -240,16 +335,171 @@ test_plan_replacement_refusal() {
 test_plan_sensitive_value_not_logged() {
   local fixture output
   fixture="$(mktemp)"
-  write_plan_fixture "$fixture" '["update"]'
-  output="$(inspect_plan_json "$fixture" sensitive-plan none)"
-  [[ "$output" != *'fixture-value-never-print'* ]]
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.apps.azurerm_container_app.this["config-server"]' \
+    '{"secret":[{"name":"fixture","value":"fixture-before-never-print"}]}' \
+    '{"secret":[{"name":"fixture","value":"fixture-after-never-print"}]}' \
+    '{"secret":true}' '{"secret":true}'
+  output="$(inspect_plan_json "$fixture" sensitive-plan pre-migration 2>&1 || true)"
+  [[ "$output" == *'changed paths: secret'* ]]
+  [[ "$output" != *'fixture-before-never-print'* ]]
+  [[ "$output" != *'fixture-after-never-print'* ]]
 }
 
-test_pre_migration_app_change_refusal() {
+test_unexpected_create_refusal() {
   local fixture
   fixture="$(mktemp)"
-  write_plan_fixture "$fixture" '["update"]'
-  inspect_plan_json "$fixture" pre-migration pre-migration
+  write_plan_fixture "$fixture" '["create"]' 'module.foundation.azurerm_log_analytics_workspace.this' \
+    'null' '{"name":"fixture"}' 'false' 'false'
+  inspect_plan_json "$fixture" unexpected-create pre-migration
+}
+
+test_all_seven_updates_are_classified() {
+  local fixture output_file
+  fixture="$(mktemp)"
+  output_file="$(mktemp)"
+  jq -n '
+    def app_change($name): {
+      address: ("module.apps.azurerm_container_app.this[\"" + $name + "\"]"),
+      change: {
+        actions: ["update"],
+        before: {secret: [{name: "fixture", value: "fixture-before-never-print"}]},
+        after: {secret: [{name: "fixture", value: "fixture-after-never-print"}]},
+        before_sensitive: {secret: true},
+        after_sensitive: {secret: true}
+      }
+    };
+    {
+      resource_changes:
+        (["config-server", "games-service", "gateway", "order-service", "payment-service", "user-service"]
+          | map(app_change(.)))
+        + [{
+          address: "module.apps.azurerm_container_app_job.database_migrations",
+          change: {
+            actions: ["update"],
+            before: {template: [{container: [{image: "fixture-current"}]}]},
+            after: {template: [{container: [{image: "fixture-candidate"}]}]},
+            before_sensitive: {},
+            after_sensitive: {}
+          }
+        }]
+    }
+  ' >"$fixture"
+
+  if inspect_plan_json "$fixture" seven-updates pre-migration >"$output_file" 2>&1; then
+    return 1
+  fi
+  [[ "$LAST_PLAN_CHANGE_COUNT" == 7 ]]
+  [[ "$(grep -c '^- module\.apps\.' "$output_file")" == 7 ]]
+  grep -Fq -- '- module.apps.azurerm_container_app_job.database_migrations' "$output_file"
+  grep -Fq 'changed paths: template[0].container[0].image' "$output_file"
+  [[ "$(grep -c 'changed paths: secret' "$output_file")" == 6 ]]
+  if grep -q 'fixture-.*-never-print' "$output_file"; then return 1; fi
+}
+
+mock_terraform_secret_state() {
+  local order_password="${1:-fixture-stable-postgres-app}"
+  jq -n --arg order_password "$order_password" '{
+    values: {
+      root_module: {
+        child_modules: [{
+          address: "module.apps",
+          resources: [
+            {address:"module.apps.azurerm_container_app.this[\"config-server\"]",values:{secret:[{name:"jwt-secret",value:"fixture-stable-jwt"}]}},
+            {address:"module.apps.azurerm_container_app.this[\"gateway\"]",values:{secret:[{name:"jwt-secret",value:"fixture-stable-jwt"}]}},
+            {address:"module.apps.azurerm_container_app.this[\"games-service\"]",values:{secret:[{name:"db-password",value:"fixture-stable-postgres-app"}]}},
+            {address:"module.apps.azurerm_container_app.this[\"library-service\"]",values:{secret:[{name:"mongo-uri",value:"fixture-stable-cosmos"}]}},
+            {address:"module.apps.azurerm_container_app.this[\"order-service\"]",values:{secret:[{name:"db-password",value:$order_password}]}},
+            {address:"module.apps.azurerm_container_app.this[\"payment-service\"]",values:{secret:[{name:"db-password",value:"fixture-stable-postgres-app"}]}},
+            {address:"module.apps.azurerm_container_app.this[\"user-service\"]",values:{secret:[
+              {name:"mongo-uri",value:"fixture-stable-cosmos"},
+              {name:"jwt-secret",value:"fixture-stable-jwt"},
+              {name:"admin-password",value:"fixture-stable-admin"}
+            ]}},
+            {address:"module.apps.azurerm_container_app_job.database_migrations",values:{secret:[
+              {name:"postgres-admin-password",value:"fixture-stable-postgres-admin"},
+              {name:"postgres-app-password",value:"fixture-stable-postgres-app"}
+            ]}}
+          ]
+        }]
+      }
+    }
+  }'
+}
+
+test_stable_redeployment_secrets() {
+  local output_file permissions
+  PLAN_DIRECTORY="$(mktemp -d)"
+  output_file="$(mktemp)"
+  export TF_VAR_application_jwt_secret='fixture-candidate-jwt'
+  export TF_VAR_postgresql_application_password='fixture-candidate-postgres-app'
+  export TF_VAR_application_admin_password='fixture-candidate-admin'
+  export TF_VAR_postgresql_administrator_password='fixture-candidate-postgres-admin'
+  terraform() { mock_terraform_secret_state; }
+
+  prepare_stable_redeployment_secrets >"$output_file"
+  permissions="$(stat -c '%a' "$REDEPLOY_SECRET_VAR_FILE")"
+  [[ "$permissions" == 600 ]]
+  jq -e '
+    .application_jwt_secret == "fixture-stable-jwt"
+    and .postgresql_application_password == "fixture-stable-postgres-app"
+    and .application_admin_password == "fixture-stable-admin"
+    and .postgresql_administrator_password == "fixture-stable-postgres-admin"
+  ' "$REDEPLOY_SECRET_VAR_FILE" >/dev/null
+  [[ "$(grep -c 'matches the deployed.*: false' "$output_file")" == 4 ]]
+  if grep -q 'fixture-' "$output_file"; then return 1; fi
+  rm -f -- "$output_file"
+  rm -rf -- "$PLAN_DIRECTORY"
+  REDEPLOY_SECRET_VAR_FILE=""
+}
+
+test_inconsistent_postgresql_secrets_refused() {
+  local status=0
+  PLAN_DIRECTORY="$(mktemp -d)"
+  export TF_VAR_application_jwt_secret='fixture-candidate-jwt'
+  export TF_VAR_postgresql_application_password='fixture-candidate-postgres-app'
+  export TF_VAR_application_admin_password='fixture-candidate-admin'
+  export TF_VAR_postgresql_administrator_password='fixture-candidate-postgres-admin'
+  terraform() { mock_terraform_secret_state fixture-inconsistent-postgres-app; }
+
+  if prepare_stable_redeployment_secrets >/dev/null; then
+    status=1
+  fi
+  rm -rf -- "$PLAN_DIRECTORY"
+  REDEPLOY_SECRET_VAR_FILE=""
+  return "$status"
+}
+
+test_redeploy_plan_uses_private_secret_var_file() {
+  local terraform_arguments
+  PLAN_DIRECTORY="$(mktemp -d)"
+  terraform_arguments="${PLAN_DIRECTORY}/terraform-arguments.txt"
+  REDEPLOY_SECRET_VAR_FILE="${PLAN_DIRECTORY}/stable-redeployment-secrets.tfvars.json"
+  jq -n '{
+    application_jwt_secret: "fixture-stable-jwt",
+    postgresql_application_password: "fixture-stable-postgres-app",
+    application_admin_password: "fixture-stable-admin",
+    postgresql_administrator_password: "fixture-stable-postgres-admin"
+  }' >"$REDEPLOY_SECRET_VAR_FILE"
+  chmod 600 "$REDEPLOY_SECRET_VAR_FILE"
+  populate_digest_maps
+  copy_digest_map CURRENT_APPLICATION_DIGESTS ROLLOUT_APPLICATION_DIGESTS
+  terraform() {
+    if [[ "$*" == *" plan "* ]]; then
+      printf '%s\n' "$*" >"$terraform_arguments"
+    elif [[ "$*" == *" show -json "* ]]; then
+      jq -n '{resource_changes: []}'
+    else
+      return 1
+    fi
+  }
+
+  create_safe_plan stable-secrets stable-secrets ROLLOUT_APPLICATION_DIGESTS \
+    "$CURRENT_MIGRATION_DIGEST" "$ALL_ACTIVE_APPLICATIONS" pre-migration >/dev/null
+  grep -Fq -- "-var-file=${REDEPLOY_SECRET_VAR_FILE}" "$terraform_arguments"
+  if grep -q 'fixture-stable-' "$terraform_arguments"; then return 1; fi
+  rm -rf -- "$PLAN_DIRECTORY"
+  REDEPLOY_SECRET_VAR_FILE=""
 }
 
 test_cosmos_derivation() {
@@ -377,13 +627,26 @@ assert_fails "migration Failed stops release" mock_migration_failed
 assert_fails "migration timeout stops release" mock_migration_timeout
 assert_succeeds "initial migration-gated ordered rollout" test_initial_rollout
 assert_succeeds "redeploy keeps all application digests unchanged before migration" test_redeploy_migration_gate
+assert_succeeds "multiline Azure CLI revision details are parsed exactly" test_multiline_revision_parsing
 assert_fails "Config Server unhealthy revision stops release" test_revision_health_failure config-server
 assert_fails "Discovery unhealthy revision stops release" test_revision_health_failure discovery-service
 assert_fails "Gateway unhealthy revision stops release" test_revision_health_failure gateway
+assert_succeeds "normal redeploy with unchanged applications passes pre-migration" test_normal_redeploy_no_changes
+assert_succeeds "application image update is allowed only after migration" test_application_image_update_after_migration_allowed
+assert_succeeds "migration-job image update is allowed before migration" test_migration_job_image_update_before_migration_allowed
+assert_fails "application image update before migration is refused" test_pre_migration_attribute_refusal image
+assert_fails "application scaling update before migration is refused" test_pre_migration_attribute_refusal scaling
+assert_fails "application ingress update before migration is refused" test_pre_migration_attribute_refusal ingress
+assert_fails "application probe update before migration is refused" test_pre_migration_attribute_refusal probe
+assert_fails "uncontrolled application secret rotation is refused" test_pre_migration_attribute_refusal secret
 assert_fails "Terraform delete action is refused" test_plan_delete_refusal
 assert_fails "Terraform delete/create replacement is refused" test_plan_replacement_refusal
-assert_fails "Container App update before migration is refused" test_pre_migration_app_change_refusal
+assert_fails "unexpected Terraform resource creation is refused" test_unexpected_create_refusal
 assert_succeeds "sensitive plan value is absent from summary" test_plan_sensitive_value_not_logged
+assert_succeeds "all six app updates and the migration job are classified" test_all_seven_updates_are_classified
+assert_succeeds "routine redeploy preserves consistent healthy-release secrets" test_stable_redeployment_secrets
+assert_succeeds "inconsistent PostgreSQL app and migration secrets are refused" test_inconsistent_postgresql_secrets_refused
+assert_succeeds "redeploy plans use the private secret var file without argv exposure" test_redeploy_plan_uses_private_secret_var_file
 assert_succeeds "Cosmos URI is derived, injected, sensitive, and not context-driven" test_cosmos_derivation
 assert_succeeds "OIDC state audit is read-only and does not infer write" test_oidc_audit_read_only
 assert_succeeds "CircleCI approval and stable serial group block concurrent deployment" test_circleci_serial_gate

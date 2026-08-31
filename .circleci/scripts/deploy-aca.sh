@@ -61,6 +61,7 @@ LAST_PLAN_FILE=""
 LAST_PLAN_ADD_COUNT=0
 LAST_PLAN_CHANGE_COUNT=0
 LAST_PLAN_DESTROY_COUNT=0
+REDEPLOY_SECRET_VAR_FILE=""
 
 validate_positive_integer() {
   local variable_name="$1"
@@ -383,10 +384,10 @@ digests_as_json() {
   printf '%s\n' "$json"
 }
 
-print_unexpected_container_app_changes() {
+print_pre_migration_plan_changes() {
   local plan_json="$1"
 
-  printf 'Unexpected pre-migration Container App changes:\n' >&2
+  printf 'Pre-migration Terraform changes:\n' >&2
   jq -r '
     def path_text:
       reduce .[] as $part ("";
@@ -424,9 +425,8 @@ print_unexpected_container_app_changes() {
       else
         $path
       end;
-    .resource_changes[]?
-    | select(.address | test("^module[.]apps[.]azurerm_container_app[.]this\\["))
-    | select(.change.actions != ["no-op"])
+    [.resource_changes[]? | select(.change.actions != ["no-op"])]
+    | sort_by(.address)[]
     | . as $resource
     | [changed_paths(
         $resource.change.before;
@@ -441,26 +441,38 @@ print_unexpected_container_app_changes() {
 
 inspect_plan_json() {
   local plan_json="$1" phase_name="$2" allowed_create_scope="$3"
-  local replacement_count unexpected_create_count unexpected_app_change_count
-  read -r LAST_PLAN_ADD_COUNT LAST_PLAN_CHANGE_COUNT LAST_PLAN_DESTROY_COUNT replacement_count < <(
-    jq -r ' [.resource_changes[]?.change.actions] as $actions | [
+  local plan_summary replacement_count unexpected_create_count unexpected_app_change_count
+  if ! plan_summary="$(jq -er ' [.resource_changes[]?.change.actions] as $actions | [
       ([$actions[] | select(index("create") != null)] | length),
       ([$actions[] | select(index("update") != null)] | length),
       ([$actions[] | select(index("delete") != null)] | length),
       ([$actions[] | select(index("delete") != null and index("create") != null)] | length)
-    ] | @tsv' "$plan_json")
+    ] | @tsv' "$plan_json" 2>/dev/null)"; then
+    echo "Unable to parse the Terraform plan summary safely; operation refused." >&2
+    return 1
+  fi
+  IFS=$'\t' read -r LAST_PLAN_ADD_COUNT LAST_PLAN_CHANGE_COUNT \
+    LAST_PLAN_DESTROY_COUNT replacement_count <<<"$plan_summary"
+  if [[ ! "$LAST_PLAN_ADD_COUNT" =~ ^[0-9]+$ || ! "$LAST_PLAN_CHANGE_COUNT" =~ ^[0-9]+$ || \
+    ! "$LAST_PLAN_DESTROY_COUNT" =~ ^[0-9]+$ || ! "$replacement_count" =~ ^[0-9]+$ ]]; then
+    echo "Terraform returned invalid plan action counts; operation refused." >&2
+    return 1
+  fi
   printf 'Terraform plan summary for %s: add=%s change=%s destroy=%s\n' \
     "$phase_name" "$LAST_PLAN_ADD_COUNT" "$LAST_PLAN_CHANGE_COUNT" "$LAST_PLAN_DESTROY_COUNT"
   if ((LAST_PLAN_DESTROY_COUNT != 0 || replacement_count != 0)); then
     printf 'Delete or delete/create action detected in phase %s; operation refused.\n' "$phase_name" >&2
     return 1
   fi
-  unexpected_create_count="$(jq --arg scope "$allowed_create_scope" '[
+  if ! unexpected_create_count="$(jq -er --arg scope "$allowed_create_scope" '[
     .resource_changes[]? | select(.change.actions | index("create") != null)
     | select($scope != "initial-apps-job" or (
         ((.address | test("^module[.]apps[.]azurerm_container_app[.]this\\[")) | not)
         and .address != "module.apps.azurerm_container_app_job.database_migrations"
-      ))] | length' "$plan_json")"
+      ))] | length' "$plan_json" 2>/dev/null)"; then
+    echo "Unable to inspect Terraform resource creations safely; operation refused." >&2
+    return 1
+  fi
   if ((unexpected_create_count != 0)); then
     printf 'Unexpected resource creation detected in phase %s; foundation recreation is refused.\n' \
       "$phase_name" >&2
@@ -468,13 +480,16 @@ inspect_plan_json() {
   fi
 
   if [[ "$allowed_create_scope" == "pre-migration" ]]; then
-    unexpected_app_change_count="$(jq '[
+    if ! unexpected_app_change_count="$(jq -er '[
       .resource_changes[]?
       | select(.address | test("^module[.]apps[.]azurerm_container_app[.]this\\["))
       | select(.change.actions != ["no-op"])
-    ] | length' "$plan_json")"
+    ] | length' "$plan_json" 2>/dev/null)"; then
+      echo "Unable to inspect pre-migration Container App changes safely; operation refused." >&2
+      return 1
+    fi
     if ((unexpected_app_change_count != 0)); then
-      print_unexpected_container_app_changes "$plan_json"
+      print_pre_migration_plan_changes "$plan_json"
       printf 'Container App change detected before migration in phase %s; operation refused.\n' \
         "$phase_name" >&2
       return 1
@@ -486,14 +501,23 @@ create_safe_plan() {
   local phase_slug="$1" phase_name="$2" digest_map_name="$3"
   local migration_digest="$4" active_applications="$5" allowed_create_scope="$6"
   local application_digests_json plan_json plan_log plan_exit
+  local -a secret_var_file_argument=()
   application_digests_json="$(digests_as_json "$digest_map_name")"
   LAST_PLAN_FILE="${PLAN_DIRECTORY}/${phase_slug}.tfplan"
   plan_json="${PLAN_DIRECTORY}/${phase_slug}.json"
   plan_log="${PLAN_DIRECTORY}/${phase_slug}.plan.log"
+  if [[ -n "$REDEPLOY_SECRET_VAR_FILE" ]]; then
+    [[ -s "$REDEPLOY_SECRET_VAR_FILE" ]] || {
+      echo "Stable redeployment secret inputs are unavailable." >&2
+      exit 1
+    }
+    secret_var_file_argument=(-var-file="$REDEPLOY_SECRET_VAR_FILE")
+  fi
   printf 'Planning ACA phase: %s\n' "$phase_name"
   set +e
   terraform -chdir="$ACA_TERRAFORM_DIRECTORY" plan -detailed-exitcode \
     -input=false -lock-timeout=10m -out="$LAST_PLAN_FILE" \
+    "${secret_var_file_argument[@]}" \
     -var="application_image_digests=${application_digests_json}" \
     -var="database_migrations_image_digest=${migration_digest}" \
     -var="active_applications=${active_applications}" >"$plan_log" 2>&1
@@ -683,9 +707,81 @@ run_post_deployment_health_checks() {
   echo "All Container App revisions, public routes, Eureka registrations, and services are healthy."
 }
 
+prepare_stable_redeployment_secrets() {
+  REDEPLOY_SECRET_VAR_FILE="${PLAN_DIRECTORY}/stable-redeployment-secrets.tfvars.json"
+  # A routine redeploy carries forward the secrets from the last applied
+  # Terraform release, which created the running revisions. Reading live ACA
+  # app-scope secrets here would be unsafe: Azure can update them without
+  # restarting those revisions. The refreshed plan still detects and refuses
+  # any difference between this state snapshot and Azure.
+  if ! terraform -chdir="$ACA_TERRAFORM_DIRECTORY" show -json \
+    | jq -e '
+      def module_resources:
+        .resources[]?, (.child_modules[]? | module_resources);
+      [.values.root_module | module_resources] as $resources
+      | def resource_values($address; $label):
+          ([$resources[] | select(.address == $address)]) as $matches
+          | if ($matches | length) != 1 then
+              error("Terraform state has an unexpected resource count for " + $label)
+            else
+              $matches[0].values
+            end;
+      def secret_map($address; $expected_names; $label):
+        (resource_values($address; $label).secret // null) as $items
+        | if ($items | type) != "array" then
+            error("Terraform state has malformed secret metadata for " + $label)
+          elif ([$items[]?.name] | sort) != ($expected_names | sort) then
+            error("Terraform state has an unexpected secret topology for " + $label)
+          elif any($items[]; (.value | type) != "string" or (.value | length) == 0) then
+            error("Terraform state has an unavailable secret value for " + $label)
+          else
+            reduce $items[] as $item ({}; .[$item.name] = $item.value)
+          end;
+      secret_map("module.apps.azurerm_container_app.this[\"config-server\"]"; ["jwt-secret"]; "config-server") as $config_values
+      | secret_map("module.apps.azurerm_container_app.this[\"gateway\"]"; ["jwt-secret"]; "gateway") as $gateway_values
+      | secret_map("module.apps.azurerm_container_app.this[\"games-service\"]"; ["db-password"]; "games-service") as $games_values
+      | secret_map("module.apps.azurerm_container_app.this[\"library-service\"]"; ["mongo-uri"]; "library-service") as $library_values
+      | secret_map("module.apps.azurerm_container_app.this[\"order-service\"]"; ["db-password"]; "order-service") as $order_values
+      | secret_map("module.apps.azurerm_container_app.this[\"payment-service\"]"; ["db-password"]; "payment-service") as $payment_values
+      | secret_map("module.apps.azurerm_container_app.this[\"user-service\"]"; ["admin-password", "jwt-secret", "mongo-uri"]; "user-service") as $user_values
+      | secret_map("module.apps.azurerm_container_app_job.database_migrations"; ["postgres-admin-password", "postgres-app-password"]; "database migration job") as $migration_values
+      | if $config_values["jwt-secret"] != $gateway_values["jwt-secret"]
+          or $config_values["jwt-secret"] != $user_values["jwt-secret"] then
+          error("Deployed ACA JWT secrets are inconsistent")
+        elif $games_values["db-password"] != $order_values["db-password"]
+          or $games_values["db-password"] != $payment_values["db-password"]
+          or $games_values["db-password"] != $migration_values["postgres-app-password"] then
+          error("Deployed ACA PostgreSQL application passwords are inconsistent")
+        elif $library_values["mongo-uri"] != $user_values["mongo-uri"] then
+          error("Deployed ACA Cosmos MongoDB URIs are inconsistent")
+        else
+          {
+            application_jwt_secret: $config_values["jwt-secret"],
+            postgresql_application_password: $games_values["db-password"],
+            application_admin_password: $user_values["admin-password"],
+            postgresql_administrator_password: $migration_values["postgres-admin-password"]
+          }
+        end
+    ' >"$REDEPLOY_SECRET_VAR_FILE"; then
+    echo "Unable to establish consistent secrets from the last applied Terraform release." >&2
+    return 1
+  fi
+  chmod 600 "$REDEPLOY_SECRET_VAR_FILE"
+
+  jq -r '[
+    "CircleCI application JWT candidate matches the deployed ACA value: \(.application_jwt_secret == env.TF_VAR_application_jwt_secret)",
+    "CircleCI PostgreSQL application password candidate matches the deployed ACA value: \(.postgresql_application_password == env.TF_VAR_postgresql_application_password)",
+    "CircleCI application admin password candidate matches the deployed ACA value: \(.application_admin_password == env.TF_VAR_application_admin_password)",
+    "CircleCI PostgreSQL administrator password candidate matches the deployed migration-job value: \(.postgresql_administrator_password == env.TF_VAR_postgresql_administrator_password)"
+  ] | .[]' "$REDEPLOY_SECRET_VAR_FILE"
+
+  echo "Last applied Terraform secret topology and cross-resource values verified for stable redeployment."
+}
+
 prepare_rollout_state() {
   if [[ "$DETECTED_RELEASE_MODE" == "redeploy" ]]; then
     load_current_healthy_release
+    prepare_stable_redeployment_secrets
     copy_digest_map CURRENT_APPLICATION_DIGESTS ROLLOUT_APPLICATION_DIGESTS
   else
     copy_digest_map DESIRED_APPLICATION_DIGESTS ROLLOUT_APPLICATION_DIGESTS
@@ -754,6 +850,7 @@ main() {
   export TF_VAR_project_name="$ACA_PROJECT_NAME"
   export TF_VAR_environment="$ACA_ENVIRONMENT_NAME"
   export TF_VAR_postgresql_application_username="${TF_VAR_postgresql_application_username:-steam_app}"
+  umask 077
   PLAN_DIRECTORY="$(mktemp -d /tmp/aca-terraform-plans.XXXXXX)"
   trap cleanup_plan_directory EXIT
   aca_authenticate_with_circleci_oidc
