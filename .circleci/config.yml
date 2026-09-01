@@ -182,20 +182,6 @@ jobs:
             done
 
             source .circleci/scripts/lib/aca-deployment.sh
-            command -v circleci || true
-            command -v circleci-agent || true
-            for circleci_candidate in circleci circleci-agent; do
-              circleci_candidate_path="$(command -v "$circleci_candidate" 2>/dev/null || true)"
-              if [[ -n "$circleci_candidate_path" ]] && \
-                aca_circleci_environment_cli_supports_custom_audience \
-                  "$circleci_candidate_path"; then
-                printf '%s custom-audience OIDC capability: supported\n' \
-                  "$circleci_candidate"
-              else
-                printf '%s custom-audience OIDC capability: unsupported\n' \
-                  "$circleci_candidate"
-              fi
-            done
             aca_require_circleci_environment_cli
       - run:
           name: Scan Azure and prepare the validated Prowler workspace bundle

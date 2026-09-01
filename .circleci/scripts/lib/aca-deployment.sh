@@ -47,40 +47,51 @@ aca_require_command() {
   }
 }
 
-aca_circleci_environment_cli_supports_custom_audience() {
+aca_circleci_fallback_is_task_agent_compatible() {
   local executable="$1"
-  local oidc_help
+  local run_help
 
+  [[ "$executable" != "/snap/bin/circleci" ]] || return 1
   [[ -x "$executable" ]] || return 1
-  oidc_help="$("$executable" run oidc get --help 2>&1)" || return 1
-  [[ "$oidc_help" == *"--claims"* ]]
+  run_help="$("$executable" run --help 2>&1)" || return 1
+  [[ "$run_help" =~ (^|[[:space:]])oidc([[:space:]]|$) ]]
 }
 
 aca_resolve_circleci_environment_cli() {
-  local candidate
   local executable
 
-  for candidate in circleci-agent circleci; do
-    executable="$(command -v "$candidate" 2>/dev/null)" || continue
-    if aca_circleci_environment_cli_supports_custom_audience "$executable"; then
-      printf '%s\n' "$executable"
-      return 0
-    fi
-  done
+  executable="$(command -v circleci-agent 2>/dev/null || true)"
+  if [[ -n "$executable" && -x "$executable" ]]; then
+    printf '%s\n' "$executable"
+    return 0
+  fi
+
+  executable="$(command -v circleci 2>/dev/null || true)"
+  if [[ -n "$executable" ]] && \
+    aca_circleci_fallback_is_task_agent_compatible "$executable"; then
+    printf '%s\n' "$executable"
+    return 0
+  fi
 
   cat >&2 <<'EOF'
 CircleCI's task-agent environment CLI with custom-audience OIDC support is required.
-Neither circleci-agent nor circleci provides `run oidc get --claims`.
+No executable circleci-agent or task-agent-compatible circleci fallback was found.
 Do not replace the task-agent command with the similarly named CircleCI Local CLI.
 EOF
   return 1
 }
 
 aca_require_circleci_environment_cli() {
+  local circleci_agent_path
+  local circleci_path
   local executable
 
+  circleci_path="$(command -v circleci 2>/dev/null || true)"
+  circleci_agent_path="$(command -v circleci-agent 2>/dev/null || true)"
+  printf 'circleci path: %s\n' "${circleci_path:-not found}"
+  printf 'circleci-agent path: %s\n' "${circleci_agent_path:-not found}"
   executable="$(aca_resolve_circleci_environment_cli)" || return 1
-  printf 'CircleCI environment CLI supports custom-audience OIDC: %s\n' "$executable"
+  printf 'selected Environment CLI: %s\n' "$executable"
 }
 
 aca_validate_circleci_oidc_token_claims() {
@@ -145,8 +156,7 @@ aca_authenticate_with_circleci_oidc() {
   }
 
   circleci_environment_cli="$(aca_resolve_circleci_environment_cli)" || exit 1
-  printf 'CircleCI environment CLI supports custom-audience OIDC: %s\n' \
-    "$circleci_environment_cli"
+  printf 'selected Environment CLI: %s\n' "$circleci_environment_cli"
   if ! oidc_token="$(
     "$circleci_environment_cli" run oidc get \
       --claims '{"aud":"api://AzureADTokenExchange"}'
