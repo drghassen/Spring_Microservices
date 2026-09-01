@@ -14,6 +14,7 @@ readonly DATA_MAIN="${REPOSITORY_ROOT}/ACA/modules/data/main.tf"
 readonly APP_LOCALS="${REPOSITORY_ROOT}/ACA/modules/apps/locals.tf"
 readonly OIDC_AUDIT="${REPOSITORY_ROOT}/.circleci/scripts/azure-oidc-audit.sh"
 readonly ACA_PREFLIGHT="${REPOSITORY_ROOT}/.circleci/scripts/aca-preflight.sh"
+readonly ACA_DEPLOYMENT_LIB="${REPOSITORY_ROOT}/.circleci/scripts/lib/aca-deployment.sh"
 
 # The suite deliberately replaces sourced functions with local Azure/Terraform mocks.
 # shellcheck disable=SC2317
@@ -941,14 +942,17 @@ test_circleci_preflight_diagnostics_report_paths_and_selection() {
 }
 
 test_oidc_authentication_uses_resolved_binary_without_logging_token() {
-  local call_log mock_directory oidc_tmpdir oidc_tmpdir_log oidc_token
-  local original_directory original_path output
+  local call_log inherited_tmpdir mock_directory oidc_tmpdir_log oidc_token
+  local original_directory original_path output runtime_directories_before
+  local runtime_directories_after
   mock_directory="$(mktemp -d)"
   call_log="${mock_directory}/calls.log"
   oidc_tmpdir_log="${mock_directory}/oidc-tmpdir.log"
+  inherited_tmpdir="${mock_directory}/circleci-runtime"
   oidc_token='mock-sensitive-oidc-token'
   original_directory="$PWD"
   original_path="$PATH"
+  mkdir -p "$inherited_tmpdir"
   write_circleci_cli_mock "${mock_directory}/circleci" false
   write_circleci_cli_mock "${mock_directory}/circleci-agent" true
 
@@ -982,30 +986,33 @@ test_oidc_authentication_uses_resolved_binary_without_logging_token() {
   MOCK_OIDC_TOKEN="$oidc_token"
   export MOCK_CIRCLECI_CALL_LOG MOCK_CIRCLECI_TMPDIR_LOG MOCK_OIDC_TOKEN
   PATH="$mock_directory:$original_path"
-  TMPDIR=/tmp/task-agent-subcommands
+  TMPDIR="$inherited_tmpdir"
   export TMPDIR
   cd "$mock_directory"
+  runtime_directories_before="$(find "$mock_directory" -mindepth 1 -maxdepth 1 -type d -print | sort)"
   output="$(aca_authenticate_with_circleci_oidc 2>&1)"
+  runtime_directories_after="$(find "$mock_directory" -mindepth 1 -maxdepth 1 -type d -print | sort)"
 
   cd "$original_directory"
   PATH="$original_path"
-  oidc_tmpdir="$(<"$oidc_tmpdir_log")"
   grep -Fqx 'circleci-agent:run oidc get --claims {"aud":"api://AzureADTokenExchange"}' \
     "$call_log"
   if grep -q '^circleci:run oidc get --claims' "$call_log"; then return 1; fi
-  [[ "$oidc_tmpdir" == "${mock_directory}/.circleci-oidc-tmp."* ]]
-  [[ ! -e "$oidc_tmpdir" ]]
+  [[ "$(<"$oidc_tmpdir_log")" == "$inherited_tmpdir" ]]
+  [[ "$runtime_directories_after" == "$runtime_directories_before" ]]
   [[ "$output" != *"$oidc_token"* ]]
 }
 
 test_oidc_generation_failure_fails_closed() {
-  local call_log mock_directory oidc_tmpdir oidc_tmpdir_log original_directory
-  local original_path output status
+  local call_log inherited_tmpdir mock_directory oidc_tmpdir_log
+  local original_directory original_path output status
   mock_directory="$(mktemp -d)"
   call_log="${mock_directory}/calls.log"
   oidc_tmpdir_log="${mock_directory}/oidc-tmpdir.log"
+  inherited_tmpdir="${mock_directory}/circleci-runtime"
   original_directory="$PWD"
   original_path="$PATH"
+  mkdir -p "$inherited_tmpdir"
   write_circleci_cli_mock "${mock_directory}/circleci-agent" false
 
   aca_validate_circleci_oidc_token_claims() {
@@ -1026,7 +1033,7 @@ test_oidc_generation_failure_fails_closed() {
   MOCK_OIDC_FAILURE=true
   export MOCK_CIRCLECI_CALL_LOG MOCK_CIRCLECI_TMPDIR_LOG MOCK_OIDC_FAILURE
   PATH="$mock_directory:$original_path"
-  TMPDIR=/tmp/task-agent-subcommands
+  TMPDIR="$inherited_tmpdir"
   export TMPDIR
   cd "$mock_directory"
   status=0
@@ -1034,14 +1041,77 @@ test_oidc_generation_failure_fails_closed() {
   cd "$original_directory"
   PATH="$original_path"
 
-  oidc_tmpdir="$(<"$oidc_tmpdir_log")"
   [[ "$status" -ne 0 ]]
   grep -Fqx 'circleci-agent:run oidc get --claims {"aud":"api://AzureADTokenExchange"}' \
     "$call_log"
   if grep -q '^login ' "$call_log"; then return 1; fi
-  [[ "$oidc_tmpdir" == "${mock_directory}/.circleci-oidc-tmp."* ]]
-  [[ ! -e "$oidc_tmpdir" ]]
+  [[ "$(<"$oidc_tmpdir_log")" == "$inherited_tmpdir" ]]
   [[ "$output" == *"CircleCI failed to issue a custom-audience OIDC token."* ]]
+}
+
+test_oidc_authentication_has_no_private_tmpdir_override() {
+  local private_tmpdir_marker='circleci-oidc'"-tmp"
+  local tmpdir_assignment='TMPDIR='
+  local oidc_invocation='run oidc'
+
+  if grep -q "$private_tmpdir_marker" "$ACA_DEPLOYMENT_LIB"; then return 1; fi
+  if grep -Eq "${tmpdir_assignment}.*(${oidc_invocation}|circleci_environment_cli)" \
+      "$ACA_DEPLOYMENT_LIB"; then
+    return 1
+  fi
+}
+
+test_oidc_selected_account_mismatch_rejected() {
+  local inherited_tmpdir mismatch="$1" mock_directory original_path output status
+  mock_directory="$(mktemp -d)"
+  inherited_tmpdir="${mock_directory}/circleci-runtime"
+  original_path="$PATH"
+  mkdir -p "$inherited_tmpdir"
+  write_circleci_cli_mock "${mock_directory}/circleci-agent" false
+
+  aca_validate_circleci_oidc_token_claims() {
+    [[ "$1" == 'mock-oidc-token' ]]
+  }
+  az() {
+    case "${1:-} ${2:-}" in
+      "login --service-principal"|"account set") ;;
+      "account show")
+        if [[ "$*" == *"--query id"* ]]; then
+          if [[ "$mismatch" == subscription ]]; then
+            printf '%s\n' unexpected-subscription-id
+          else
+            printf '%s\n' "$AZURE_SUBSCRIPTION_ID"
+          fi
+        elif [[ "$*" == *"--query tenantId"* ]]; then
+          if [[ "$mismatch" == tenant ]]; then
+            printf '%s\n' unexpected-tenant-id
+          else
+            printf '%s\n' "$AZURE_TENANT_ID"
+          fi
+        else
+          return 1
+        fi
+        ;;
+      *) return 1 ;;
+    esac
+  }
+
+  CIRCLE_BRANCH=master
+  CIRCLE_PROJECT_USERNAME="$ACA_EXPECTED_CIRCLECI_PROJECT_USERNAME"
+  CIRCLE_PROJECT_REPONAME="$ACA_EXPECTED_CIRCLECI_PROJECT_REPONAME"
+  AZURE_CLIENT_ID=mock-client-id
+  AZURE_TENANT_ID=mock-tenant-id
+  AZURE_SUBSCRIPTION_ID=mock-subscription-id
+  MOCK_OIDC_TOKEN=mock-oidc-token
+  export MOCK_OIDC_TOKEN
+  PATH="$mock_directory:$original_path"
+  TMPDIR="$inherited_tmpdir"
+  export TMPDIR
+
+  status=0
+  output="$(aca_authenticate_with_circleci_oidc 2>&1)" || status=$?
+  [[ "$status" -ne 0 ]]
+  [[ "$output" == *"Azure selected an unexpected subscription or tenant."* ]]
 }
 
 test_circleci_environment_cli_not_overwritten() {
@@ -1176,6 +1246,9 @@ assert_fails "/snap/bin/circleci is never accepted as an environment CLI fallbac
 assert_succeeds "CircleCI preflight reports both paths and the selected Environment CLI" test_circleci_preflight_diagnostics_report_paths_and_selection
 assert_succeeds "OIDC generation uses the resolved binary without logging the token" test_oidc_authentication_uses_resolved_binary_without_logging_token
 assert_succeeds "OIDC token generation failure stops before Azure login" test_oidc_generation_failure_fails_closed
+assert_succeeds "OIDC authentication inherits TMPDIR and contains no private override" test_oidc_authentication_has_no_private_tmpdir_override
+assert_succeeds "OIDC authentication rejects an unexpected selected Azure subscription" test_oidc_selected_account_mismatch_rejected subscription
+assert_succeeds "OIDC authentication rejects an unexpected selected Azure tenant" test_oidc_selected_account_mismatch_rejected tenant
 assert_succeeds "CircleCI environment CLI is never overwritten" test_circleci_environment_cli_not_overwritten
 assert_succeeds "CircleCI OIDC claims pass without readonly reassignment" test_oidc_claims_validation
 assert_fails "CircleCI OIDC token from an unexpected branch is rejected" test_oidc_wrong_branch_rejected

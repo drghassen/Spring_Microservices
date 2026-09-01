@@ -94,34 +94,6 @@ aca_require_circleci_environment_cli() {
   printf 'selected Environment CLI: %s\n' "$executable"
 }
 
-aca_create_private_oidc_tmpdir() {
-  local workspace_directory="$PWD"
-
-  [[ -d "$workspace_directory" && -w "$workspace_directory" && \
-    -x "$workspace_directory" ]] || {
-    echo "The CircleCI workspace must be writable for private OIDC runtime files." >&2
-    return 1
-  }
-
-  # The task-agent downloads and executes the OIDC subcommand below TMPDIR.
-  # Never reuse the runner-wide temporary directory: stale ownership, noexec
-  # mounts, and concurrent jobs can otherwise prevent token generation.
-  umask 077
-  mktemp -d "${workspace_directory%/}/.circleci-oidc-tmp.XXXXXX"
-}
-
-aca_remove_private_oidc_tmpdir() {
-  local oidc_tmpdir="$1"
-  local workspace_directory="$2"
-
-  [[ -n "$oidc_tmpdir" && \
-    "$oidc_tmpdir" == "${workspace_directory%/}"/.circleci-oidc-tmp.* ]] || {
-    echo "Refusing to remove an unexpected OIDC temporary directory." >&2
-    return 1
-  }
-  rm -rf -- "$oidc_tmpdir"
-}
-
 aca_validate_circleci_oidc_token_claims() {
   local oidc_token="$1"
 
@@ -169,9 +141,7 @@ PY
 
 aca_authenticate_with_circleci_oidc() {
   local circleci_environment_cli
-  local oidc_tmpdir
   local oidc_token
-  local workspace_directory
   local selected_subscription_id
   local selected_tenant_id
 
@@ -187,20 +157,13 @@ aca_authenticate_with_circleci_oidc() {
 
   circleci_environment_cli="$(aca_resolve_circleci_environment_cli)" || exit 1
   printf 'selected Environment CLI: %s\n' "$circleci_environment_cli"
-  workspace_directory="$PWD"
-  oidc_tmpdir="$(aca_create_private_oidc_tmpdir)" || {
-    echo "Unable to create a private runtime directory for CircleCI OIDC." >&2
-    exit 1
-  }
   if ! oidc_token="$(
-    TMPDIR="$oidc_tmpdir" "$circleci_environment_cli" run oidc get \
+    "$circleci_environment_cli" run oidc get \
       --claims '{"aud":"api://AzureADTokenExchange"}'
   )"; then
-    aca_remove_private_oidc_tmpdir "$oidc_tmpdir" "$workspace_directory" || true
     echo "CircleCI failed to issue a custom-audience OIDC token." >&2
     exit 1
   fi
-  aca_remove_private_oidc_tmpdir "$oidc_tmpdir" "$workspace_directory" || exit 1
   aca_validate_circleci_oidc_token_claims "$oidc_token"
 
   az login \
