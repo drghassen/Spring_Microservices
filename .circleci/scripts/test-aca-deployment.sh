@@ -846,6 +846,9 @@ write_circleci_cli_mock() {
     '  exit 99' \
     'fi' \
     'if [[ "$*" == "run oidc get --claims {\"aud\":\"api://AzureADTokenExchange\"}" ]]; then' \
+    '  if [[ -n "${MOCK_CIRCLECI_TMPDIR_LOG:-}" ]]; then' \
+    '    printf "%s\\n" "$TMPDIR" >"$MOCK_CIRCLECI_TMPDIR_LOG"' \
+    '  fi' \
     '  if [[ "${MOCK_OIDC_FAILURE:-false}" == true ]]; then exit 1; fi' \
     '  printf "%s\\n" "${MOCK_OIDC_TOKEN:-mock-oidc-token}"' \
     '  exit 0' \
@@ -938,10 +941,13 @@ test_circleci_preflight_diagnostics_report_paths_and_selection() {
 }
 
 test_oidc_authentication_uses_resolved_binary_without_logging_token() {
-  local call_log mock_directory oidc_token original_path output
+  local call_log mock_directory oidc_tmpdir oidc_tmpdir_log oidc_token
+  local original_directory original_path output
   mock_directory="$(mktemp -d)"
   call_log="${mock_directory}/calls.log"
+  oidc_tmpdir_log="${mock_directory}/oidc-tmpdir.log"
   oidc_token='mock-sensitive-oidc-token'
+  original_directory="$PWD"
   original_path="$PATH"
   write_circleci_cli_mock "${mock_directory}/circleci" false
   write_circleci_cli_mock "${mock_directory}/circleci-agent" true
@@ -972,22 +978,33 @@ test_oidc_authentication_uses_resolved_binary_without_logging_token() {
   AZURE_TENANT_ID=mock-tenant-id
   AZURE_SUBSCRIPTION_ID=mock-subscription-id
   MOCK_CIRCLECI_CALL_LOG="$call_log"
+  MOCK_CIRCLECI_TMPDIR_LOG="$oidc_tmpdir_log"
   MOCK_OIDC_TOKEN="$oidc_token"
-  export MOCK_CIRCLECI_CALL_LOG MOCK_OIDC_TOKEN
-  PATH="$mock_directory"
+  export MOCK_CIRCLECI_CALL_LOG MOCK_CIRCLECI_TMPDIR_LOG MOCK_OIDC_TOKEN
+  PATH="$mock_directory:$original_path"
+  TMPDIR=/tmp/task-agent-subcommands
+  export TMPDIR
+  cd "$mock_directory"
   output="$(aca_authenticate_with_circleci_oidc 2>&1)"
 
+  cd "$original_directory"
   PATH="$original_path"
+  oidc_tmpdir="$(<"$oidc_tmpdir_log")"
   grep -Fqx 'circleci-agent:run oidc get --claims {"aud":"api://AzureADTokenExchange"}' \
     "$call_log"
   if grep -q '^circleci:run oidc get --claims' "$call_log"; then return 1; fi
+  [[ "$oidc_tmpdir" == "${mock_directory}/.circleci-oidc-tmp."* ]]
+  [[ ! -e "$oidc_tmpdir" ]]
   [[ "$output" != *"$oidc_token"* ]]
 }
 
 test_oidc_generation_failure_fails_closed() {
-  local call_log mock_directory original_path output status
+  local call_log mock_directory oidc_tmpdir oidc_tmpdir_log original_directory
+  local original_path output status
   mock_directory="$(mktemp -d)"
   call_log="${mock_directory}/calls.log"
+  oidc_tmpdir_log="${mock_directory}/oidc-tmpdir.log"
+  original_directory="$PWD"
   original_path="$PATH"
   write_circleci_cli_mock "${mock_directory}/circleci-agent" false
 
@@ -1005,17 +1022,25 @@ test_oidc_generation_failure_fails_closed() {
   AZURE_TENANT_ID=mock-tenant-id
   AZURE_SUBSCRIPTION_ID=mock-subscription-id
   MOCK_CIRCLECI_CALL_LOG="$call_log"
+  MOCK_CIRCLECI_TMPDIR_LOG="$oidc_tmpdir_log"
   MOCK_OIDC_FAILURE=true
-  export MOCK_CIRCLECI_CALL_LOG MOCK_OIDC_FAILURE
-  PATH="$mock_directory"
+  export MOCK_CIRCLECI_CALL_LOG MOCK_CIRCLECI_TMPDIR_LOG MOCK_OIDC_FAILURE
+  PATH="$mock_directory:$original_path"
+  TMPDIR=/tmp/task-agent-subcommands
+  export TMPDIR
+  cd "$mock_directory"
   status=0
   output="$(aca_authenticate_with_circleci_oidc 2>&1)" || status=$?
+  cd "$original_directory"
   PATH="$original_path"
 
+  oidc_tmpdir="$(<"$oidc_tmpdir_log")"
   [[ "$status" -ne 0 ]]
   grep -Fqx 'circleci-agent:run oidc get --claims {"aud":"api://AzureADTokenExchange"}' \
     "$call_log"
   if grep -q '^login ' "$call_log"; then return 1; fi
+  [[ "$oidc_tmpdir" == "${mock_directory}/.circleci-oidc-tmp."* ]]
+  [[ ! -e "$oidc_tmpdir" ]]
   [[ "$output" == *"CircleCI failed to issue a custom-audience OIDC token."* ]]
 }
 
