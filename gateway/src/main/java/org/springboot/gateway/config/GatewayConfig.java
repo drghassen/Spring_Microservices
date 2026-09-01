@@ -1,12 +1,15 @@
 package org.springboot.gateway.config;
 
 import org.springboot.gateway.filter.JwtAuthenticationFilter;
+import org.springboot.gateway.filter.RateLimitAbuseObserver;
+import org.springboot.gateway.filter.RateLimitOutcomeFilter;
 import org.springboot.gateway.filter.RoleAssignmentFilter;
+import org.springboot.gateway.filter.TemporaryIpBlockFilter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.route.RouteLocator;
 import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.beans.factory.annotation.Value;
 
 import java.util.List;
 
@@ -14,6 +17,9 @@ import java.util.List;
 @Configuration
 public class GatewayConfig {
     private final JwtAuthenticationFilter filter;
+    private final TemporaryIpBlockFilter temporaryIpBlockFilter;
+    private final RateLimitAbuseObserver rateLimitAbuseObserver;
+    private final RateLimitOutcomeFilter authRateLimitOutcomeFilter;
     
         //VARIABLES
         @Value("${roles.admin}")
@@ -54,8 +60,15 @@ public class GatewayConfig {
 
 
 
-    public GatewayConfig(JwtAuthenticationFilter filter) {
+    public GatewayConfig(
+            JwtAuthenticationFilter filter,
+            TemporaryIpBlockFilter temporaryIpBlockFilter,
+            RateLimitAbuseObserver rateLimitAbuseObserver,
+            RateLimitOutcomeFilter authRateLimitOutcomeFilter) {
         this.filter = filter;
+        this.temporaryIpBlockFilter = temporaryIpBlockFilter;
+        this.rateLimitAbuseObserver = rateLimitAbuseObserver;
+        this.authRateLimitOutcomeFilter = authRateLimitOutcomeFilter;
     }
 
     @Bean
@@ -69,6 +82,10 @@ public class GatewayConfig {
                         .uri(uriUserService))
 
                 .route(userService, r -> r.path("/api/v1/auth/**")
+                        .filters(f -> f
+                                .filter(temporaryIpBlockFilter)
+                                .filter(rateLimitAbuseObserver)
+                                .filter(authRateLimitOutcomeFilter))
                         .uri(uriUserService))
 
                 .route(userService, r -> r.path("/api/v1/user/admin/**")

@@ -8,6 +8,10 @@ eureka:
 server:
   port: 8222
 spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   cloud:
     gateway:
       discovery:
@@ -71,6 +75,20 @@ app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost,http://localhost:4200,http://127.0.0.1:4200}
 
+rate-limit:
+  auth:
+    replenish-rate: ${RATE_LIMIT_AUTH_REPLENISH_RATE:5}
+    burst-capacity: ${RATE_LIMIT_AUTH_BURST_CAPACITY:10}
+
+ip-blocking:
+  mode: ${IP_BLOCKING_MODE:SHADOW}
+  window:
+    duration: ${IP_BLOCKING_WINDOW_SECONDS:10}s
+    rate-limit-429-threshold: ${IP_BLOCKING_429_THRESHOLD:3}
+    abusive-windows-required: ${IP_BLOCKING_WINDOWS_REQUIRED:3}
+  block:
+    duration: ${IP_BLOCKING_DURATION_SECONDS:60}s
+
 management:
   endpoints:
     web:
@@ -79,3 +97,12 @@ management:
   endpoint:
     health:
       show-details: always
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState
+        redis:
+          include: redis

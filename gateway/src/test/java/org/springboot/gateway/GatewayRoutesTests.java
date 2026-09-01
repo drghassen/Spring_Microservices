@@ -2,7 +2,10 @@ package org.springboot.gateway;
 
 import org.junit.jupiter.api.Test;
 import org.springboot.gateway.config.GatewayConfig;
+import org.springboot.gateway.filter.RateLimitAbuseObserver;
+import org.springboot.gateway.filter.RateLimitOutcomeFilter;
 import org.springboot.gateway.filter.RoleAssignmentFilter;
+import org.springboot.gateway.filter.TemporaryIpBlockFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.gateway.route.RouteLocator;
@@ -51,5 +54,22 @@ class GatewayRoutesTests {
                         "Paths: [/api/v1/payments/**], match trailing slash: true",
                         "Paths: [/api/v1/library/**], match trailing slash: true"
                 );
+
+        var authRoute = routes.stream()
+                .filter(route -> route.getPredicate().toString().contains("/api/v1/auth/**"))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(authRoute.getFilters())
+                .hasSize(3)
+                .extracting(filter -> ((org.springframework.core.Ordered) filter).getOrder())
+                .containsExactly(
+                        TemporaryIpBlockFilter.ORDER,
+                        RateLimitAbuseObserver.ORDER,
+                        RateLimitOutcomeFilter.ORDER);
+
+        assertThat(authRoute.getFilters())
+                .extracting(Object::toString)
+                .anySatisfy(description -> assertThat(description).contains("RequestRateLimiter"));
     }
 }

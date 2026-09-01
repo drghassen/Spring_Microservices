@@ -1,7 +1,8 @@
 locals {
-  # Terraform provisions the resources but cannot guarantee application startup
-  # order. Expected runtime order: config-server, discovery-service, gateway,
-  # then the business services and client.
+  # Redis provisioning is an explicit prerequisite for these workloads, but
+  # Terraform cannot guarantee startup order among the release applications.
+  # Their expected runtime order remains config-server, discovery-service,
+  # gateway, then the business services and client.
   app_definitions = {
     client = {
       target_port  = 8080
@@ -36,17 +37,29 @@ locals {
       }
     }
     gateway = {
-      target_port  = 8222
-      external     = false
-      min_replicas = 1
-      max_replicas = 2
-      health_path  = "/actuator/health"
+      target_port    = 8222
+      external       = false
+      min_replicas   = 1
+      max_replicas   = 2
+      health_path    = "/actuator/health"
+      liveness_path  = "/actuator/health/liveness"
+      readiness_path = "/actuator/health/readiness"
+      startup_path   = "/actuator/health/liveness"
       environment = {
-        SPRING_PROFILES_ACTIVE  = "aca"
-        CONFIG_SERVER_URL       = "optional:configserver:http://config-server"
-        EUREKA_DEFAULT_ZONE     = "http://discovery-service/eureka"
-        EUREKA_HOSTNAME_GATEWAY = "gateway"
-        CORS_ALLOWED_ORIGINS    = "https://client.${var.container_app_environment_default_domain}"
+        SPRING_PROFILES_ACTIVE         = "aca"
+        CONFIG_SERVER_URL              = "optional:configserver:http://config-server"
+        EUREKA_DEFAULT_ZONE            = "http://discovery-service/eureka"
+        EUREKA_HOSTNAME_GATEWAY        = "gateway"
+        CORS_ALLOWED_ORIGINS           = "https://client.${var.container_app_environment_default_domain}"
+        REDIS_HOST                     = "redis"
+        REDIS_PORT                     = "6379"
+        RATE_LIMIT_AUTH_REPLENISH_RATE = tostring(var.rate_limit_auth_replenish_rate)
+        RATE_LIMIT_AUTH_BURST_CAPACITY = tostring(var.rate_limit_auth_burst_capacity)
+        IP_BLOCKING_MODE               = "SHADOW"
+        IP_BLOCKING_WINDOW_SECONDS     = "10"
+        IP_BLOCKING_429_THRESHOLD      = "3"
+        IP_BLOCKING_WINDOWS_REQUIRED   = "3"
+        IP_BLOCKING_DURATION_SECONDS   = "60"
       }
     }
     games-service = {

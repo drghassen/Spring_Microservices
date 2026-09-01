@@ -44,11 +44,34 @@ services:
       CONFIG_SERVER_URL: optional:configserver:http://config-server:8888
       EUREKA_DEFAULT_ZONE: http://discovery-service:8761/eureka
       JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env}"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      RATE_LIMIT_AUTH_REPLENISH_RATE: "5"
+      RATE_LIMIT_AUTH_BURST_CAPACITY: "10"
+      IP_BLOCKING_MODE: "SHADOW"
+      IP_BLOCKING_WINDOW_SECONDS: "10"
+      IP_BLOCKING_429_THRESHOLD: "3"
+      IP_BLOCKING_WINDOWS_REQUIRED: "3"
+      IP_BLOCKING_DURATION_SECONDS: "60"
     networks:
       - microservices
     depends_on:
       discovery-service:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - microservices
 
   games-service:
     image: ${IMAGE_REPOSITORY_PREFIX:-ghassen_dridi}/games-service:${IMAGE_TAG:-local}

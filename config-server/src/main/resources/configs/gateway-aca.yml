@@ -14,6 +14,11 @@ server:
   forward-headers-strategy: native
 
 spring:
+  data:
+    redis:
+      # ACA must never fall back to a Redis process inside the Gateway container.
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
   cloud:
     gateway:
       discovery:

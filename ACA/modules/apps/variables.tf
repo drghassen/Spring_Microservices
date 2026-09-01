@@ -45,6 +45,36 @@ variable "application_image_digests" {
   }
 }
 
+variable "redis_image" {
+  description = "Official Redis 7.4 Alpine image pinned by digest for the internal POC workload."
+  type        = string
+
+  validation {
+    condition     = can(regex("^redis:7[.]4-alpine@sha256:[0-9a-f]{64}$", var.redis_image))
+    error_message = "redis_image must be redis:7.4-alpine pinned to a sha256 digest."
+  }
+}
+
+variable "rate_limit_auth_replenish_rate" {
+  description = "Tokens replenished per second for the ACA authentication rate limiter."
+  type        = number
+
+  validation {
+    condition     = var.rate_limit_auth_replenish_rate > 0 && floor(var.rate_limit_auth_replenish_rate) == var.rate_limit_auth_replenish_rate
+    error_message = "rate_limit_auth_replenish_rate must be a positive integer."
+  }
+}
+
+variable "rate_limit_auth_burst_capacity" {
+  description = "Maximum token capacity for the ACA authentication rate limiter."
+  type        = number
+
+  validation {
+    condition     = var.rate_limit_auth_burst_capacity >= var.rate_limit_auth_replenish_rate && floor(var.rate_limit_auth_burst_capacity) == var.rate_limit_auth_burst_capacity
+    error_message = "rate_limit_auth_burst_capacity must be an integer greater than or equal to the replenish rate."
+  }
+}
+
 variable "database_migrations_image_digest" {
   description = "Immutable ACR digest for the PostgreSQL migration image."
   type        = string

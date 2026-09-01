@@ -1,11 +1,17 @@
 output "container_app_ids" {
   description = "Non-sensitive map of Azure Container App resource IDs by application name."
-  value       = { for name, app in azurerm_container_app.this : name => app.id }
+  value = merge(
+    { for name, app in azurerm_container_app.this : name => app.id },
+    { redis = azurerm_container_app.redis.id }
+  )
 }
 
 output "container_app_fqdns" {
   description = "Non-sensitive map of Container App ingress FQDNs by application name."
-  value       = { for name, app in azurerm_container_app.this : name => try(app.ingress[0].fqdn, null) }
+  value = merge(
+    { for name, app in azurerm_container_app.this : name => try(app.ingress[0].fqdn, null) },
+    { redis = try(azurerm_container_app.redis.ingress[0].fqdn, null) }
+  )
 }
 
 output "client_fqdn" {
@@ -21,6 +27,11 @@ output "client_url" {
 output "gateway_fqdn" {
   description = "Internal ingress FQDN of the gateway Container App."
   value       = try(azurerm_container_app.this["gateway"].ingress[0].fqdn, null)
+}
+
+output "redis_fqdn" {
+  description = "Internal-only FQDN of the shared Redis POC Container App."
+  value       = try(azurerm_container_app.redis.ingress[0].fqdn, null)
 }
 
 output "database_migrations_job_id" {

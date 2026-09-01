@@ -148,6 +148,11 @@ output "gateway_fqdn" {
   value       = module.apps.gateway_fqdn
 }
 
+output "redis_fqdn" {
+  description = "Internal-only FQDN of the shared Redis POC Container App."
+  value       = module.apps.redis_fqdn
+}
+
 output "database_migrations_job_id" {
   description = "Resource ID of the PostgreSQL database migrations Container Apps Job."
   value       = module.apps.database_migrations_job_id

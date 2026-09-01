@@ -136,6 +136,39 @@ variable "database_migrations_image_digest" {
   }
 }
 
+variable "redis_image" {
+  description = "Official Redis 7.4 Alpine image pinned by digest for the internal POC rate-limit store."
+  type        = string
+  default     = "redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+
+  validation {
+    condition     = can(regex("^redis:7[.]4-alpine@sha256:[0-9a-f]{64}$", var.redis_image))
+    error_message = "redis_image must be redis:7.4-alpine pinned to a sha256 digest."
+  }
+}
+
+variable "rate_limit_auth_replenish_rate" {
+  description = "Tokens replenished per second for the ACA authentication rate limiter; this POC default is not the final anti-bruteforce policy."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.rate_limit_auth_replenish_rate > 0 && floor(var.rate_limit_auth_replenish_rate) == var.rate_limit_auth_replenish_rate
+    error_message = "rate_limit_auth_replenish_rate must be a positive integer."
+  }
+}
+
+variable "rate_limit_auth_burst_capacity" {
+  description = "Maximum token capacity for the ACA authentication rate limiter; this POC default is not the final anti-bruteforce policy."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.rate_limit_auth_burst_capacity >= var.rate_limit_auth_replenish_rate && floor(var.rate_limit_auth_burst_capacity) == var.rate_limit_auth_burst_capacity
+    error_message = "rate_limit_auth_burst_capacity must be an integer greater than or equal to the replenish rate."
+  }
+}
+
 variable "active_applications" {
   description = "Applications allowed to keep their normal minimum replicas. All applications remain declared; the default activates all nine."
   type        = set(string)

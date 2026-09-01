@@ -3,6 +3,10 @@ spring:
     import: ${CONFIG_SERVER_URL:optional:configserver:http://config-server:8888}
   application:
     name: gateway
+  data:
+    redis:
+      host: localhost
+      port: 6379
 
 server:
   port: 8020
@@ -13,6 +17,37 @@ jwt:
 roles:
   admin: ADMIN
   user: USER
+
+rate-limit:
+  auth:
+    replenish-rate: 5
+    burst-capacity: 10
+
+ip-blocking:
+  mode: SHADOW
+  window:
+    duration: 10s
+    rate-limit-429-threshold: 3
+    abusive-windows-required: 3
+  block:
+    duration: 60s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState
+        redis:
+          include: redis
 
 services:
   user-service:

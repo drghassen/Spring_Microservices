@@ -633,6 +633,32 @@ test_unexpected_create_refusal() {
   inspect_plan_json "$fixture" unexpected-create pre-migration
 }
 
+test_redis_bootstrap_allows_only_redis_create() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["create"]' 'module.apps.azurerm_container_app.redis' \
+    'null' '{"name":"redis"}' 'false' 'false'
+  inspect_plan_json "$fixture" redis-bootstrap redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_allows_gateway_environment_update() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.apps.azurerm_container_app.this["gateway"]' \
+    '{"template":[{"container":[{"env":[]}]}]}' \
+    '{"template":[{"container":[{"env":[{"name":"REDIS_HOST","value":"redis"}]}]}]}' '{}' '{}'
+  inspect_plan_json "$fixture" redis-bootstrap redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_refuses_unrelated_create() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["create"]' 'module.foundation.azurerm_log_analytics_workspace.this' \
+    'null' '{"name":"fixture"}' 'false' 'false'
+  inspect_plan_json "$fixture" redis-bootstrap redis-bootstrap '["gateway"]'
+}
+
 test_all_seven_updates_are_classified() {
   local fixture output_file
   fixture="$(mktemp)"
@@ -1228,6 +1254,9 @@ assert_fails "uncontrolled application secret rotation is refused" test_pre_migr
 assert_fails "Terraform delete action is refused" test_plan_delete_refusal
 assert_fails "Terraform delete/create replacement is refused" test_plan_replacement_refusal
 assert_fails "unexpected Terraform resource creation is refused" test_unexpected_create_refusal
+assert_succeeds "Redis bootstrap allows the exact internal Redis Container App creation" test_redis_bootstrap_allows_only_redis_create
+assert_succeeds "Redis bootstrap allows the intended Gateway environment update" test_redis_bootstrap_allows_gateway_environment_update
+assert_fails "Redis bootstrap refuses unrelated resource creation" test_redis_bootstrap_refuses_unrelated_create
 assert_succeeds "sensitive plan value is absent from summary" test_plan_sensitive_value_not_logged
 assert_succeeds "all six app updates and the migration job are classified" test_all_seven_updates_are_classified
 assert_succeeds "routine redeploy preserves consistent healthy-release secrets" test_stable_redeployment_secrets

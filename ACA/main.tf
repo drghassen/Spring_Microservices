@@ -69,6 +69,9 @@ module "apps" {
   apps_managed_identity_id                 = module.identities.apps_managed_identity_id
   acr_login_server                         = data.azurerm_container_registry.current.login_server
   application_image_digests                = var.application_image_digests
+  redis_image                              = var.redis_image
+  rate_limit_auth_replenish_rate           = var.rate_limit_auth_replenish_rate
+  rate_limit_auth_burst_capacity           = var.rate_limit_auth_burst_capacity
   database_migrations_image_digest         = var.database_migrations_image_digest
   active_applications                      = var.active_applications
   postgresql_server_fqdn                   = module.data.postgresql_server_fqdn
@@ -83,6 +86,6 @@ module "apps" {
   tags                                     = local.effective_tags
 }
 
-# No image is selected at the foundation stage. Future Container Apps must
-# use immutable CircleCI-produced image tags; legacy build-31 images are not
-# valid deployment inputs.
+# Application images use immutable CircleCI-produced ACR digests; legacy
+# build-31 images are not valid deployment inputs. The separate POC Redis
+# infrastructure workload uses its official image pinned by version and digest.

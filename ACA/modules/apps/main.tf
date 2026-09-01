@@ -1,6 +1,10 @@
 resource "azurerm_container_app" "this" {
   for_each = local.app_definitions
 
+  # Redis is infrastructure for every Gateway revision. Keeping this dependency
+  # explicit prevents an initial Gateway rollout from racing the TCP endpoint.
+  depends_on = [azurerm_container_app.redis]
+
   name                         = each.key
   resource_group_name          = var.resource_group_name
   container_app_environment_id = var.container_app_environment_id
@@ -58,7 +62,7 @@ resource "azurerm_container_app" "this" {
       liveness_probe {
         transport               = "HTTP"
         port                    = each.value.target_port
-        path                    = each.value.health_path
+        path                    = try(each.value.liveness_path, each.value.health_path)
         initial_delay           = 60
         interval_seconds        = 30
         timeout                 = 5
@@ -68,7 +72,7 @@ resource "azurerm_container_app" "this" {
       readiness_probe {
         transport               = "HTTP"
         port                    = each.value.target_port
-        path                    = each.value.health_path
+        path                    = try(each.value.readiness_path, each.value.health_path)
         initial_delay           = 5
         interval_seconds        = 10
         timeout                 = 5
@@ -79,7 +83,7 @@ resource "azurerm_container_app" "this" {
       startup_probe {
         transport               = "HTTP"
         port                    = each.value.target_port
-        path                    = each.value.health_path
+        path                    = try(each.value.startup_path, each.value.health_path)
         initial_delay           = 10
         interval_seconds        = 10
         timeout                 = 5
@@ -101,6 +105,81 @@ resource "azurerm_container_app" "this" {
 
   # User and Games uploads use each replica's ephemeral filesystem in this POC;
   # no Azure Files or Blob volume is created here.
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# POC-only shared rate-limit state. This workload deliberately remains outside
+# the application image-digest map: it uses the official Redis image pinned by
+# version and digest, has no business data, and is not part of application
+# release waves.
+resource "azurerm_container_app" "redis" {
+  name                         = "redis"
+  resource_group_name          = var.resource_group_name
+  container_app_environment_id = var.container_app_environment_id
+  workload_profile_name        = "Consumption"
+  revision_mode                = "Single"
+  tags                         = var.tags
+
+  template {
+    min_replicas = 1
+    max_replicas = 1
+
+    container {
+      name   = "redis"
+      image  = var.redis_image
+      cpu    = 0.25
+      memory = "0.5Gi"
+
+      # Token buckets may be reset when this single POC replica restarts.
+      # Use a shell command so the empty Redis `save` value is preserved by ACA;
+      # the provider normalizes an empty element in `args` to null.
+      command = ["/bin/sh", "-c"]
+      args    = ["exec redis-server --save '' --appendonly no"]
+
+      startup_probe {
+        transport               = "TCP"
+        port                    = 6379
+        initial_delay           = 1
+        interval_seconds        = 2
+        timeout                 = 1
+        failure_count_threshold = 30
+      }
+
+      readiness_probe {
+        transport               = "TCP"
+        port                    = 6379
+        initial_delay           = 1
+        interval_seconds        = 5
+        timeout                 = 1
+        failure_count_threshold = 3
+        success_count_threshold = 1
+      }
+
+      liveness_probe {
+        transport               = "TCP"
+        port                    = 6379
+        initial_delay           = 10
+        interval_seconds        = 30
+        timeout                 = 1
+        failure_count_threshold = 3
+      }
+    }
+  }
+
+  ingress {
+    external_enabled = false
+    target_port      = 6379
+    exposed_port     = 6379
+    transport        = "tcp"
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
 
   lifecycle {
     prevent_destroy = true

@@ -480,10 +480,17 @@ inspect_plan_json() {
   fi
   if ! unexpected_create_count="$(jq -er --arg scope "$allowed_create_scope" '[
     .resource_changes[]? | select(.change.actions | index("create") != null)
-    | select($scope != "initial-apps-job" or (
-        ((.address | test("^module[.]apps[.]azurerm_container_app[.]this\\[")) | not)
-        and .address != "module.apps.azurerm_container_app_job.database_migrations"
-      ))] | length' "$plan_json" 2>/dev/null)"; then
+    | select(
+        if $scope == "initial-apps-job" then
+          ((.address | test("^module[.]apps[.]azurerm_container_app[.]this\\[")) | not)
+          and .address != "module.apps.azurerm_container_app_job.database_migrations"
+          and .address != "module.apps.azurerm_container_app.redis"
+        elif $scope == "redis-bootstrap" then
+          .address != "module.apps.azurerm_container_app.redis"
+        else
+          true
+        end
+      )] | length' "$plan_json" 2>/dev/null)"; then
     echo "Unable to inspect Terraform resource creations safely; operation refused." >&2
     return 1
   fi
@@ -509,7 +516,8 @@ inspect_plan_json() {
     fi
   fi
 
-  if ! unexpected_update_count="$(jq -er --argjson allowed "$allowed_application_updates" '
+  if ! unexpected_update_count="$(jq -er --argjson allowed "$allowed_application_updates" \
+    --arg scope "$allowed_create_scope" '
     if $allowed == null then
       0
     elif (($allowed | type) == "array"
@@ -518,7 +526,10 @@ inspect_plan_json() {
       ($allowed | map("module.apps.azurerm_container_app.this[\"" + . + "\"]")) as $addresses
       | [.resource_changes[]?
           | select(.change.actions != ["no-op"])
-          | select(.address as $address | ($addresses | index($address)) == null)]
+          | select(.address as $address
+              | ($addresses | index($address)) == null
+              and ($scope != "redis-bootstrap"
+                or $address != "module.apps.azurerm_container_app.redis"))]
       | length
     else
       error("invalid application update allowlist")
@@ -865,7 +876,7 @@ run_plan_only() {
   else
     create_safe_plan migration-preview "redeployment migration preview" \
       ROLLOUT_APPLICATION_DIGESTS "$DESIRED_MIGRATION_DIGEST" \
-      "$ALL_ACTIVE_APPLICATIONS" pre-migration
+      "$ALL_ACTIVE_APPLICATIONS" redis-bootstrap '["gateway"]'
   fi
   printf 'ACA plan gate passed: mode=%s add=%s change=%s destroy=%s; no apply executed.\n' \
     "$DETECTED_RELEASE_MODE" "$LAST_PLAN_ADD_COUNT" "$LAST_PLAN_CHANGE_COUNT" \
@@ -874,15 +885,20 @@ run_plan_only() {
 
 run_deployment() {
   local bootstrap_create_scope="pre-migration" bootstrap_active_applications="$ALL_ACTIVE_APPLICATIONS"
+  local bootstrap_allowed_application_updates='["gateway"]'
   local deployment_started_at="$SECONDS"
   if [[ "$DETECTED_RELEASE_MODE" == "initial" ]]; then
     bootstrap_create_scope="initial-apps-job"
     bootstrap_active_applications="$NO_ACTIVE_APPLICATIONS"
+    bootstrap_allowed_application_updates=null
+  else
+    bootstrap_create_scope="redis-bootstrap"
   fi
   run_timed_phase "infrastructure/bootstrap" safe_plan_and_apply \
     infrastructure-bootstrap "infrastructure/bootstrap" \
     ROLLOUT_APPLICATION_DIGESTS "$CURRENT_MIGRATION_DIGEST" \
-    "$bootstrap_active_applications" "$bootstrap_create_scope"
+    "$bootstrap_active_applications" "$bootstrap_create_scope" \
+    "$bootstrap_allowed_application_updates"
   run_timed_phase "migration job update" safe_plan_and_apply \
     migration-job "migration job update" \
     ROLLOUT_APPLICATION_DIGESTS "$DESIRED_MIGRATION_DIGEST" \
