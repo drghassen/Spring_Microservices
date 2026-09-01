@@ -219,11 +219,8 @@ jobs:
               exit 1
             }
 
+            bash .circleci/scripts/prepare-circleci-workspace.sh
             workspace_directory="$PWD/.circleci-workspace/prowler"
-            test ! -e "$PWD/.circleci-workspace" || {
-              echo "Refusing to reuse an existing Prowler workspace directory." >&2
-              exit 1
-            }
             mkdir -p "$workspace_directory"
             install -m 600 "$filtered_csv" \
               "$workspace_directory/prowler-internship-proxym.csv"
@@ -294,6 +291,9 @@ jobs:
     steps:
       - checkout:
           method: full
+      - run:
+          name: Prepare the local CircleCI workspace attachment target
+          command: bash .circleci/scripts/prepare-circleci-workspace.sh
       - attach_workspace:
           at: .circleci-workspace
       - run:

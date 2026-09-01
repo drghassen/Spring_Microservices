@@ -7,6 +7,7 @@ readonly REPOSITORY_ROOT="$(cd "${SCRIPT_DIRECTORY}/../.." && pwd)"
 readonly PUBLISHER="${SCRIPT_DIRECTORY}/publish-defectdojo.sh"
 readonly MOCK_DISPATCHER="${SCRIPT_DIRECTORY}/tests/mock-command.sh"
 readonly CIRCLECI_CONFIG="${REPOSITORY_ROOT}/.circleci/config.yml"
+readonly WORKSPACE_PREPARER="${REPOSITORY_ROOT}/.circleci/scripts/prepare-circleci-workspace.sh"
 readonly TEST_TOKEN="publisher-test-token-that-must-not-be-logged"
 
 test_directory="$(mktemp -d)"
@@ -132,6 +133,93 @@ run_publisher() {
       --metadata "${bundle_directory}/metadata.json" \
       --manifest "${bundle_directory}/manifest.json" >"$log_file" 2>&1
 }
+
+workspace_test_repository="${test_directory}/workspace-repository"
+workspace_root="${workspace_test_repository}/.circleci-workspace"
+unrelated_sentinel="${workspace_test_repository}/unrelated-file-must-survive.txt"
+external_directory="${test_directory}/outside-repository"
+mkdir -p "$workspace_test_repository" "$external_directory"
+git -C "$workspace_test_repository" init -q
+printf '%s\n' 'must survive workspace cleanup' >"$unrelated_sentinel"
+printf '%s\n' 'must survive symlink rejection' >"${external_directory}/external-sentinel.txt"
+
+run_workspace_preparer() {
+  (cd "$workspace_test_repository" && bash "$WORKSPACE_PREPARER")
+}
+
+run_workspace_preparer >/dev/null || fail "first local workspace preparation"
+[[ -d "$workspace_root" ]] || fail "first preparation did not create the workspace root"
+[[ -z "$(find "$workspace_root" -mindepth 1 -print -quit)" ]] || \
+  fail "first preparation did not create an empty workspace root"
+pass "first local workspace preparation succeeds without existing state"
+
+stale_bundle="${workspace_root}/prowler"
+mkdir -p "$stale_bundle"
+for stale_file in manifest.json metadata.json prowler-internship-proxym.csv; do
+  printf 'stale previous run: %s\n' "$stale_file" >"${stale_bundle}/${stale_file}"
+done
+printf '%s\n' 'unexpected stale file' >"${stale_bundle}/stale-only.txt"
+run_workspace_preparer >/dev/null || fail "stale local workspace cleanup"
+[[ -d "$workspace_root" ]] || fail "stale cleanup did not recreate the workspace root"
+[[ -z "$(find "$workspace_root" -mindepth 1 -print -quit)" ]] || \
+  fail "stale files survived local workspace cleanup"
+pass "second local workspace preparation removes every stale bundle file"
+
+[[ -f "$unrelated_sentinel" ]] || fail "workspace cleanup removed an unrelated repository file"
+grep -Fqx 'must survive workspace cleanup' "$unrelated_sentinel" || \
+  fail "workspace cleanup changed an unrelated repository file"
+pass "workspace cleanup preserves unrelated repository files"
+
+create_bundle "${workspace_root}/prowler" valid
+actual_bundle_files="$(
+  find "${workspace_root}/prowler" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort
+)"
+expected_bundle_files=$'manifest.json\nmetadata.json\nprowler-internship-proxym.csv'
+[[ "$actual_bundle_files" == "$expected_bundle_files" ]] || \
+  fail "prepared workspace bundle does not contain exactly the expected files"
+if grep -R --fixed-strings 'stale previous run:' "${workspace_root}/prowler" >/dev/null 2>&1; then
+  fail "stale bundle contents survived into the replacement bundle"
+fi
+pass "replacement workspace bundle contains exactly the three validated files"
+
+run_workspace_preparer >/dev/null || fail "first repeated publisher attachment preparation"
+run_workspace_preparer >/dev/null || fail "second repeated publisher attachment preparation"
+[[ -d "$workspace_root" && -z "$(find "$workspace_root" -mindepth 1 -print -quit)" ]] || \
+  fail "repeated publisher attachment preparation did not leave an empty target"
+pass "publisher workspace attachment target can be prepared repeatedly"
+
+rmdir "$workspace_root"
+ln -s "$external_directory" "$workspace_root"
+if run_workspace_preparer >/dev/null 2>&1; then
+  fail "symlinked CircleCI workspace root was accepted"
+fi
+[[ -L "$workspace_root" ]] || fail "symlink rejection removed the workspace link"
+[[ -f "${external_directory}/external-sentinel.txt" ]] || \
+  fail "symlink rejection modified data outside the repository"
+rm -- "$workspace_root"
+pass "symlinked workspace root is rejected without escaping the repository"
+
+printf '%s\n' 'not a directory' >"$workspace_root"
+if run_workspace_preparer >/dev/null 2>&1; then
+  fail "regular-file CircleCI workspace root was accepted"
+fi
+grep -Fqx 'not a directory' "$workspace_root" || \
+  fail "regular-file workspace rejection changed the file"
+rm -- "$workspace_root"
+pass "regular-file workspace root is rejected without modification"
+
+mkdir -p "${workspace_test_repository}/nested"
+if (cd "${workspace_test_repository}/nested" && \
+  bash "$WORKSPACE_PREPARER" >/dev/null 2>&1); then
+  fail "workspace cleanup ran outside the repository root"
+fi
+if (cd "$workspace_test_repository" && \
+  bash "$WORKSPACE_PREPARER" "$external_directory" >/dev/null 2>&1); then
+  fail "workspace cleanup accepted an alternate target"
+fi
+[[ -f "$unrelated_sentinel" && -f "${external_directory}/external-sentinel.txt" ]] || \
+  fail "out-of-root cleanup attempt modified unrelated data"
+pass "workspace cleanup cannot run outside the repository root or accept another target"
 
 valid_bundle="${test_directory}/valid"
 create_bundle "$valid_bundle" valid
@@ -260,6 +348,16 @@ assert "AZURE_CLIENT_ID" not in publish_text
 assert "AZURE_TENANT_ID" not in publish_text
 assert "AZURE_SUBSCRIPTION_ID" not in publish_text
 assert "aca_authenticate_with_circleci_oidc" not in publish_text
+assert "bash .circleci/scripts/prepare-circleci-workspace.sh" in scan_text
+
+persist = next(step["persist_to_workspace"] for step in scan["steps"] if "persist_to_workspace" in step)
+assert persist == {"root": ".circleci-workspace", "paths": ["prowler"]}
+
+publish_steps = publish["steps"]
+attach_index = next(index for index, step in enumerate(publish_steps) if "attach_workspace" in step)
+assert publish_steps[attach_index - 1]["run"]["command"] == \
+    "bash .circleci/scripts/prepare-circleci-workspace.sh"
+assert publish_steps[attach_index]["attach_workspace"] == {"at": ".circleci-workspace"}
 
 workflow_jobs = config["workflows"]["prowler-rg-security-scan"]["jobs"]
 scan_invocation = workflow_jobs[0]["prowler-rg-security-scan"]
