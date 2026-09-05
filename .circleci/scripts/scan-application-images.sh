@@ -3,6 +3,8 @@
 set -euo pipefail
 
 source "$(dirname "$0")/lib/application-images.sh"
+# shellcheck source=lib/report-evidence.sh
+source "$(dirname "$0")/lib/report-evidence.sh"
 
 readonly TRIVY_IMAGE="aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f"
 readonly JAVA_SERVICES=(
@@ -17,14 +19,88 @@ mkdir -p reports/trivy-images
 TRIVY_CACHE_VOLUME="trivy-cache-$(date +%s)-${RANDOM}-${RANDOM}"
 docker volume create "$TRIVY_CACHE_VOLUME" >/dev/null
 
-cleanup_trivy_cache() {
-  local status=$?
+report_trivy_image_evidence() {
+  local service
+  local report
+  local counts
+  local high_count
+  local critical_count
+  local service_status
+  local images_scanned=0
+  local total_high=0
+  local total_critical=0
+  local error_count=0
+  local failed_count=0
+  local gate_status="PASSED"
 
-  docker volume rm -f "$TRIVY_CACHE_VOLUME" >/dev/null 2>&1 || true
-  return "$status"
+  report_header "TRIVY IMAGE SECURITY GATE"
+  report_pipeline_context
+  report_field "Scope" "Java backend container images"
+  report_field "Policy" "HIGH = 0 / CRITICAL = 0"
+  printf '\n'
+  report_table_header "Service                    HIGH      CRITICAL      Status"
+
+  for service in "${JAVA_SERVICES[@]}"; do
+    report="reports/trivy-images/${service}.json"
+    high_count="-"
+    critical_count="-"
+    service_status="ERROR"
+
+    if [[ -s "$report" ]] && jq empty "$report" >/dev/null 2>&1 && \
+      jq -e '.ScanError? == null' "$report" >/dev/null 2>&1; then
+      if counts="$(jq -er '
+        [
+          ([.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length),
+          ([.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length)
+        ] | @tsv
+      ' "$report" 2>/dev/null)" && read -r high_count critical_count <<<"$counts" && \
+        [[ "$high_count" =~ ^[0-9]+$ && "$critical_count" =~ ^[0-9]+$ ]]; then
+        images_scanned=$((images_scanned + 1))
+        total_high=$((total_high + high_count))
+        total_critical=$((total_critical + critical_count))
+        if (( high_count > 0 || critical_count > 0 )); then
+          service_status="FAIL"
+          failed_count=$((failed_count + 1))
+        else
+          service_status="PASS"
+        fi
+      fi
+    fi
+
+    if [[ "$service_status" == "ERROR" ]]; then
+      error_count=$((error_count + 1))
+    fi
+    printf '%-25s %8s %13s %11s\n' \
+      "$service" "$high_count" "$critical_count" "$service_status"
+  done
+
+  report_separator
+  printf '\n'
+  report_field "Images scanned" "$images_scanned"
+  report_field "Total HIGH" "$total_high"
+  report_field "Total CRITICAL" "$total_critical"
+  report_field "Reports" "reports/trivy-images/*.json"
+  if (( error_count > 0 )); then
+    gate_status="ERROR"
+  elif (( failed_count > 0 )); then
+    gate_status="FAILED"
+  fi
+  report_field "SECURITY GATE" "$gate_status"
+  report_footer
 }
 
-trap cleanup_trivy_cache EXIT
+finish_trivy_image_scan() {
+  local exit_status=$?
+
+  trap - EXIT
+  set +e
+  report_trivy_image_evidence
+
+  docker volume rm -f "$TRIVY_CACHE_VOLUME" >/dev/null 2>&1 || true
+  exit "$exit_status"
+}
+
+trap finish_trivy_image_scan EXIT
 
 trivy() {
   docker run --rm \

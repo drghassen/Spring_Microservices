@@ -184,7 +184,7 @@ jobs:
             source .circleci/scripts/lib/aca-deployment.sh
             aca_require_circleci_environment_cli
       - run:
-          name: Scan Azure and prepare the validated Prowler workspace bundle
+          name: Report evidence - Prowler audit and validated workspace bundle
           command: |
             set -euo pipefail
             umask 077
@@ -297,7 +297,7 @@ jobs:
       - attach_workspace:
           at: .circleci-workspace
       - run:
-          name: Validate and publish the filtered Prowler report
+          name: Report evidence - Prowler DefectDojo publication
           command: |
             set -euo pipefail
 

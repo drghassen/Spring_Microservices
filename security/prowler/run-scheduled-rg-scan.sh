@@ -9,6 +9,13 @@ readonly RESOURCE_GROUP="internship_proxym"
 readonly DD_SCAN_TYPE="Prowler Scan"
 readonly DEFAULT_DD_URL="https://192.168.100.1:8443"
 
+# shellcheck source=../../.circleci/scripts/lib/report-evidence.sh
+source "${REPOSITORY_ROOT}/.circleci/scripts/lib/report-evidence.sh"
+
+metadata_file=""
+filtered_csv=""
+PROWLER_UPLOAD_RESULT="NOT CONFIRMED"
+
 usage() {
   printf 'Usage: %s [--no-defectdojo]\n' "${0##*/}"
 }
@@ -31,6 +38,78 @@ find_command() {
   return 1
 }
 
+prowler_metadata_counts() {
+  local metadata_path="$1"
+  local interpreter="${python_bin:-python3}"
+
+  command -v "$interpreter" >/dev/null 2>&1 || return 1
+  "$interpreter" - "$metadata_path" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        metadata = json.load(source)
+    checks = metadata["filtered_rg_finding_count"]
+    findings = metadata["filtered_status_counts"]["fail"]
+    if (
+        isinstance(checks, bool)
+        or not isinstance(checks, int)
+        or checks < 0
+        or isinstance(findings, bool)
+        or not isinstance(findings, int)
+        or findings < 0
+    ):
+        raise ValueError
+except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+print(f"{checks}\t{findings}")
+PY
+}
+
+report_prowler_audit_evidence() {
+  local exit_status="$1"
+  local counts
+  local checks_executed="NOT AVAILABLE"
+  local findings="NOT AVAILABLE"
+  local report_generated="NO"
+  local audit_result="FAILED"
+
+  if [[ -n "$metadata_file" && -s "$metadata_file" && -n "$filtered_csv" && \
+    -s "$filtered_csv" ]] && counts="$(prowler_metadata_counts "$metadata_file" 2>/dev/null)" && \
+    read -r checks_executed findings <<<"$counts"; then
+    report_generated="YES"
+  fi
+
+  report_header "AZURE POST-DEPLOYMENT SECURITY AUDIT"
+  report_pipeline_context
+  report_field "Prowler mode" "READ-ONLY"
+  report_field "Scope" "Azure resource group: ${RESOURCE_GROUP}"
+  printf '\n'
+  report_table_header "Metric / Step                                    Result"
+  printf '%-49s %s\n' "Checks executed" "$checks_executed"
+  printf '%-49s %s\n' "Findings" "$findings"
+  printf '%-49s %s\n' "Report generated" "$report_generated"
+  printf '%-49s %s\n' "DefectDojo upload" "$PROWLER_UPLOAD_RESULT"
+  report_separator
+  printf '\n'
+  if (( exit_status == 0 )) && [[ "$report_generated" == "YES" ]]; then
+    audit_result="COMPLETED"
+  fi
+  report_field "AUDIT EXECUTION" "$audit_result"
+  report_footer
+}
+
+finish_prowler_audit() {
+  local exit_status=$?
+
+  trap - EXIT
+  set +e
+  report_prowler_audit_evidence "$exit_status"
+  exit "$exit_status"
+}
+
 upload_to_defectdojo=true
 case "${1:-}" in
   "") ;;
@@ -48,6 +127,8 @@ if (($# > 1)); then
   usage >&2
   exit 2
 fi
+
+trap finish_prowler_audit EXIT
 
 az_bin="$(find_command "${AZ_BIN:-az}" "Azure CLI")"
 python_bin="$(find_command "${PYTHON_BIN:-python3}" "Python 3")"
@@ -208,6 +289,7 @@ else
   fi
 
   printf 'Reimporting into DefectDojo test=%s.\n' "$dd_test_id"
+  PROWLER_UPLOAD_RESULT="FAILED"
   http_status="$({ printf 'header = "Authorization: Token %s"\n' "$DD_TOKEN"; } | \
     "$curl_bin" --config - \
       --fail-with-body \
@@ -227,6 +309,11 @@ else
       "$dd_endpoint")"
   printf 'DefectDojo upload status: COMPLETED (HTTP %s, close_old_findings=false)\n' \
     "$http_status"
+  if [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+    PROWLER_UPLOAD_RESULT="ACCEPTED"
+  else
+    PROWLER_UPLOAD_RESULT="NOT CONFIRMED"
+  fi
 fi
 
 scan_duration_seconds="$(($(date +%s) - scan_started_epoch))"

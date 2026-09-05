@@ -5,6 +5,8 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/aca-deployment.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/aca-deployment.sh"
+# shellcheck source=lib/report-evidence.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/report-evidence.sh"
 
 readonly MIGRATIONS_POLL_INTERVAL_SECONDS="${MIGRATIONS_POLL_INTERVAL_SECONDS:-10}"
 readonly MIGRATIONS_TIMEOUT_SECONDS="${MIGRATIONS_TIMEOUT_SECONDS:-900}"
@@ -69,6 +71,15 @@ LAST_PLAN_ADD_COUNT=0
 LAST_PLAN_CHANGE_COUNT=0
 LAST_PLAN_DESTROY_COUNT=0
 REDEPLOY_SECRET_VAR_FILE=""
+DEPLOY_EVIDENCE_ENABLED=0
+DEPLOY_AZURE_AUTH_RESULT="FAILED"
+DEPLOY_INFRASTRUCTURE_RESULT="FAILED"
+DEPLOY_MIGRATION_RESULT="FAILED"
+DEPLOY_CONTAINER_APPS_RESULT="FAILED"
+DEPLOY_REVISION_RESULT="FAILED"
+DEPLOY_HEALTH_RESULT="FAILED"
+DEPLOY_MIGRATION_EXECUTION="NOT STARTED"
+DEPLOY_MIGRATION_EXECUTION_STATUS="NOT STARTED"
 
 validate_positive_integer() {
   local variable_name="$1"
@@ -625,6 +636,7 @@ run_database_migrations() {
     echo "Azure did not return the migration execution name." >&2
     exit 1
   }
+  DEPLOY_MIGRATION_EXECUTION="$execution_name"
   printf 'Tracking migration execution started by this release: %s\n' "$execution_name"
   started_at="$SECONDS"
   while true; do
@@ -633,8 +645,10 @@ run_database_migrations() {
       --name "$ACA_MIGRATIONS_JOB_NAME" --resource-group "$ACA_RESOURCE_GROUP_NAME" \
       --job-execution-name "$execution_name" --query properties.status \
       --output tsv --only-show-errors 2>/dev/null)"; then
+      DEPLOY_MIGRATION_EXECUTION_STATUS="${execution_status:-NOT AVAILABLE}"
       case "$execution_status" in
         Succeeded)
+          DEPLOY_MIGRATION_RESULT="SUCCEEDED"
           printf 'Migration execution %s succeeded.\n' "$execution_name"
           return
           ;;
@@ -783,6 +797,7 @@ run_post_deployment_health_checks() {
   gateway_route_url="${client_url}/api/v1/games"
   assert_public_http_status "client" "$client_url/" 200
   assert_public_http_status "public Gateway games route" "$gateway_route_url" 200
+  DEPLOY_HEALTH_RESULT="PASSED"
   echo "Post-deployment application health checks passed."
 }
 
@@ -903,6 +918,7 @@ run_deployment() {
     migration-job "migration job update" \
     ROLLOUT_APPLICATION_DIGESTS "$DESIRED_MIGRATION_DIGEST" \
     "$bootstrap_active_applications" pre-migration
+  DEPLOY_INFRASTRUCTURE_RESULT="COMPLETED"
   run_timed_phase "database migrations" run_database_migrations
   run_timed_phase "config-server rollout" deploy_application_phase \
     config-server "Config Server revision" "$CONFIG_ACTIVE_APPLICATIONS" config-server
@@ -928,6 +944,8 @@ run_deployment() {
   fi
   run_timed_phase "client rollout" deploy_application_phase \
     client "Client revision and complete application set" "$ALL_ACTIVE_APPLICATIONS" client
+  DEPLOY_CONTAINER_APPS_RESULT="DEPLOYED"
+  DEPLOY_REVISION_RESULT="PASSED"
   run_timed_phase "public HTTP checks" run_post_deployment_health_checks
   printf 'Timing: complete ACA deployment = %ss\n' "$((SECONDS - deployment_started_at))"
   echo "ACA release completed successfully without deleting prior applications or revisions."
@@ -939,12 +957,130 @@ cleanup_plan_directory() {
   fi
 }
 
+report_azure_application_inventory() {
+  local application
+  local provisioning_state
+  local latest_revision
+  local health_state
+
+  report_table_header "Application                Provisioning          Revision / Health"
+  for application in "${ACA_APPLICATIONS[@]}"; do
+    provisioning_state="QUERY FAILED"
+    latest_revision="QUERY FAILED"
+    health_state="QUERY FAILED"
+
+    provisioning_state="$(az containerapp show \
+      --name "$application" --resource-group "$ACA_RESOURCE_GROUP_NAME" \
+      --query properties.provisioningState --output tsv --only-show-errors 2>/dev/null)" || \
+      provisioning_state="QUERY FAILED"
+    latest_revision="$(az containerapp show \
+      --name "$application" --resource-group "$ACA_RESOURCE_GROUP_NAME" \
+      --query properties.latestRevisionName --output tsv --only-show-errors 2>/dev/null)" || \
+      latest_revision="QUERY FAILED"
+    if [[ -n "$latest_revision" && "$latest_revision" != "null" && \
+      "$latest_revision" != "QUERY FAILED" ]]; then
+      health_state="$(az containerapp revision show \
+        --name "$application" --resource-group "$ACA_RESOURCE_GROUP_NAME" \
+        --revision "$latest_revision" --query properties.healthState \
+        --output tsv --only-show-errors 2>/dev/null)" || health_state="QUERY FAILED"
+    fi
+
+    [[ -n "$provisioning_state" && "$provisioning_state" != "null" ]] || \
+      provisioning_state="NOT AVAILABLE"
+    [[ -n "$latest_revision" && "$latest_revision" != "null" ]] || latest_revision="NOT AVAILABLE"
+    [[ -n "$health_state" && "$health_state" != "null" ]] || health_state="NOT AVAILABLE"
+    printf '%-26s %-21s %s / %s\n' \
+      "$application" "$provisioning_state" "$latest_revision" "$health_state"
+  done
+  report_separator
+}
+
+report_azure_migration_job() {
+  local provisioning_state="QUERY FAILED"
+
+  provisioning_state="$(az containerapp job show \
+    --name "$ACA_MIGRATIONS_JOB_NAME" --resource-group "$ACA_RESOURCE_GROUP_NAME" \
+    --query properties.provisioningState --output tsv --only-show-errors 2>/dev/null)" || \
+    provisioning_state="QUERY FAILED"
+  [[ -n "$provisioning_state" && "$provisioning_state" != "null" ]] || \
+    provisioning_state="NOT AVAILABLE"
+
+  printf '\n'
+  report_field "Migration job" "$ACA_MIGRATIONS_JOB_NAME"
+  report_field "Job provisioning" "$provisioning_state"
+  report_field "Release execution" "$DEPLOY_MIGRATION_EXECUTION"
+  report_field "Execution status" "$DEPLOY_MIGRATION_EXECUTION_STATUS"
+}
+
+report_azure_deployment_evidence() {
+  local exit_status="$1"
+  local deployment_result="FAILED"
+  local client_fqdn=""
+
+  report_header "AZURE DEPLOYMENT - EXECUTION EVIDENCE"
+  report_pipeline_context
+  report_field "Image tag" "${IMAGE_TAG:-NOT AVAILABLE}"
+  report_field "Resource group" "$ACA_RESOURCE_GROUP_NAME"
+  report_field "ACA environment" "$ACA_ENVIRONMENT_NAME"
+  printf '\n'
+  report_table_header "Deployment validation                            Result"
+  printf '%-49s %s\n' "Azure authentication" "$DEPLOY_AZURE_AUTH_RESULT"
+  printf '%-49s %s\n' "Infrastructure update" "$DEPLOY_INFRASTRUCTURE_RESULT"
+  printf '%-49s %s\n' "Database migration job" "$DEPLOY_MIGRATION_RESULT"
+  printf '%-49s %s\n' "Container Apps deployment" "$DEPLOY_CONTAINER_APPS_RESULT"
+  printf '%-49s %s\n' "Revision validation" "$DEPLOY_REVISION_RESULT"
+  printf '%-49s %s\n' "Health validation" "$DEPLOY_HEALTH_RESULT"
+  report_separator
+  printf '\n'
+
+  if [[ "$DEPLOY_AZURE_AUTH_RESULT" == "OK" ]]; then
+    report_azure_application_inventory
+    report_azure_migration_job
+    client_fqdn="$(az containerapp show --name client \
+      --resource-group "$ACA_RESOURCE_GROUP_NAME" \
+      --query properties.configuration.ingress.fqdn \
+      --output tsv --only-show-errors 2>/dev/null)" || client_fqdn=""
+    if [[ -n "$client_fqdn" && "$client_fqdn" != "null" ]]; then
+      report_field "Client FQDN" "$client_fqdn"
+    fi
+  else
+    report_field "Azure inventory" "NOT AVAILABLE (authentication failed)"
+  fi
+
+  if (( exit_status == 0 )) && [[ "$DEPLOY_AZURE_AUTH_RESULT" == "OK" && \
+    "$DEPLOY_INFRASTRUCTURE_RESULT" == "COMPLETED" && \
+    "$DEPLOY_MIGRATION_RESULT" == "SUCCEEDED" && \
+    "$DEPLOY_CONTAINER_APPS_RESULT" == "DEPLOYED" && \
+    "$DEPLOY_REVISION_RESULT" == "PASSED" && "$DEPLOY_HEALTH_RESULT" == "PASSED" ]]; then
+    deployment_result="PASSED"
+  fi
+  printf '\n'
+  report_field "DEPLOYMENT RESULT" "$deployment_result"
+  report_footer
+}
+
+finish_aca_operation() {
+  local exit_status=$?
+
+  trap - EXIT
+  set +e
+  if (( DEPLOY_EVIDENCE_ENABLED )); then
+    report_azure_deployment_evidence "$exit_status"
+  fi
+  cleanup_plan_directory
+  exit "$exit_status"
+}
+
 main() {
   local operation="${1:-}"
   [[ "$operation" == "plan" || "$operation" == "deploy" ]] || {
     echo "Usage: deploy-aca.sh plan|deploy" >&2
     exit 2
   }
+  if [[ "$operation" == "deploy" ]]; then
+    DEPLOY_EVIDENCE_ENABLED=1
+  fi
+  trap finish_aca_operation EXIT
   validate_release_inputs
   export TF_IN_AUTOMATION=true
   export TF_VAR_subscription_id="$AZURE_SUBSCRIPTION_ID"
@@ -955,8 +1091,8 @@ main() {
   export TF_VAR_postgresql_application_username="${TF_VAR_postgresql_application_username:-steam_app}"
   umask 077
   PLAN_DIRECTORY="$(mktemp -d /tmp/aca-terraform-plans.XXXXXX)"
-  trap cleanup_plan_directory EXIT
   aca_authenticate_with_circleci_oidc
+  DEPLOY_AZURE_AUTH_RESULT="OK"
   echo "Azure OIDC authentication and repository/branch binding succeeded."
   verify_release_images
   initialize_terraform

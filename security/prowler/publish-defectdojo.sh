@@ -3,9 +3,17 @@
 set -euo pipefail
 umask 077
 
+readonly SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly REPOSITORY_ROOT="$(cd "${SCRIPT_DIRECTORY}/../.." && pwd)"
 readonly EXPECTED_RESOURCE_GROUP="internship_proxym"
 readonly EXPECTED_DD_TEST_ID="1429"
 readonly DD_SCAN_TYPE="Prowler Scan"
+
+# shellcheck source=../../.circleci/scripts/lib/report-evidence.sh
+source "${REPOSITORY_ROOT}/.circleci/scripts/lib/report-evidence.sh"
+
+PROWLER_BUNDLE_VALIDATED=0
+PROWLER_PUBLISH_RESULT="NOT CONFIRMED"
 
 usage() {
   printf 'Usage: %s --csv PATH --metadata PATH --manifest PATH\n' "${0##*/}"
@@ -20,6 +28,71 @@ find_command() {
     return 1
   }
   command -v "$configured_command"
+}
+
+report_prowler_publication_evidence() {
+  local exit_status="$1"
+  local counts
+  local checks_executed="NOT AVAILABLE"
+  local findings="NOT AVAILABLE"
+  local report_generated="NO"
+  local audit_result="FAILED"
+  local interpreter="${python_bin:-python3}"
+
+  if (( PROWLER_BUNDLE_VALIDATED )) && command -v "$interpreter" >/dev/null 2>&1 && \
+    counts="$("$interpreter" - "$metadata_path" 2>/dev/null <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        metadata = json.load(source)
+    checks = metadata["filtered_rg_finding_count"]
+    findings = metadata["filtered_status_counts"]["fail"]
+    if (
+        isinstance(checks, bool)
+        or not isinstance(checks, int)
+        or checks < 0
+        or isinstance(findings, bool)
+        or not isinstance(findings, int)
+        or findings < 0
+    ):
+        raise ValueError
+except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+print(f"{checks}\t{findings}")
+PY
+)" && read -r checks_executed findings <<<"$counts"; then
+    report_generated="YES"
+  fi
+
+  report_header "AZURE POST-DEPLOYMENT SECURITY AUDIT"
+  report_pipeline_context
+  report_field "Prowler mode" "READ-ONLY"
+  report_field "Scope" "Azure resource group: ${EXPECTED_RESOURCE_GROUP}"
+  printf '\n'
+  report_table_header "Metric / Step                                    Result"
+  printf '%-49s %s\n' "Checks executed" "$checks_executed"
+  printf '%-49s %s\n' "Findings" "$findings"
+  printf '%-49s %s\n' "Report generated" "$report_generated"
+  printf '%-49s %s\n' "DefectDojo upload" "$PROWLER_PUBLISH_RESULT"
+  report_separator
+  printf '\n'
+  if (( exit_status == 0 )) && [[ "$report_generated" == "YES" ]]; then
+    audit_result="COMPLETED"
+  fi
+  report_field "AUDIT EXECUTION" "$audit_result"
+  report_footer
+}
+
+finish_prowler_publication() {
+  local exit_status=$?
+
+  trap - EXIT
+  set +e
+  report_prowler_publication_evidence "$exit_status"
+  exit "$exit_status"
 }
 
 csv_path=""
@@ -52,6 +125,8 @@ while (($#)); do
       ;;
   esac
 done
+
+trap finish_prowler_publication EXIT
 
 for input_path in "$csv_path" "$metadata_path" "$manifest_path"; do
   [[ -n "$input_path" && -f "$input_path" && ! -L "$input_path" && -r "$input_path" ]] || {
@@ -260,6 +335,8 @@ print(
 )
 PY
 
+PROWLER_BUNDLE_VALIDATED=1
+
 [[ -n "${DD_TOKEN:-}" ]] || {
   echo "DD_TOKEN is required for DefectDojo publication." >&2
   exit 1
@@ -283,6 +360,7 @@ PY
 
 dd_endpoint="${DD_URL%/}/api/v2/reimport-scan/"
 printf 'Publishing validated Prowler report to DefectDojo test=%s.\n' "$DD_TEST_ID"
+PROWLER_PUBLISH_RESULT="FAILED"
 http_status="$({ printf 'header = "Authorization: Token %s"\n' "$DD_TOKEN"; } | \
   "$curl_bin" --config - \
     --fail-with-body \
@@ -302,3 +380,8 @@ http_status="$({ printf 'header = "Authorization: Token %s"\n' "$DD_TOKEN"; } | 
     "$dd_endpoint")"
 printf 'DefectDojo publication status: COMPLETED (HTTP %s, close_old_findings=false)\n' \
   "$http_status"
+if [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+  PROWLER_PUBLISH_RESULT="ACCEPTED"
+else
+  PROWLER_PUBLISH_RESULT="NOT CONFIRMED"
+fi

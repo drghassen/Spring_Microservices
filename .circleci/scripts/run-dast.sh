@@ -3,6 +3,8 @@
 set -Eeuo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/application-images.sh"
+# shellcheck source=lib/report-evidence.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/report-evidence.sh"
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ZAP_IMAGE="ghcr.io/zaproxy/zaproxy@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef"
@@ -34,6 +36,7 @@ readonly -A API_TARGET_URLS=(
 )
 
 DAST_SCRIPT_STARTED_AT=0
+DAST_AUTH_STATUS="FAILED"
 
 declare -a SCAN_ERRORS=()
 declare -a SECURITY_FINDINGS_HIGH=()
@@ -263,6 +266,39 @@ validate_dast_jwt_token() {
     record_scan_error "auth" "DAST authentication: Gateway rejected JWT validation request with HTTP ${status}"
     return 1
   fi
+
+  DAST_AUTH_STATUS="JWT VALIDATED"
+}
+
+openapi_document_has_required_structure() {
+  local openapi_file="$1"
+
+  jq -e '
+    type == "object"
+    and (.openapi | type == "string")
+    and (.info | type == "object")
+    and (.paths | type == "object")
+    and (.paths | length > 0)
+    and (.servers | type == "array")
+    and (.servers | length > 0)
+    and (has("status") | not)
+    and (has("error") | not)
+  ' "$openapi_file" >/dev/null
+}
+
+openapi_document_has_resolved_local_refs() {
+  local openapi_file="$1"
+
+  jq -e '
+    . as $root
+    | def unescape_pointer: gsub("~1"; "/") | gsub("~0"; "~");
+      def refpath: ltrimstr("#/") | split("/") | map(unescape_pointer);
+      [
+        .. | objects | .["$ref"]? | select(type == "string" and startswith("#/")) as $ref
+        | select((try ($root | getpath($ref | refpath)) catch null) == null)
+      ]
+      | length == 0
+  ' "$openapi_file" >/dev/null
 }
 
 validate_openapi_document() {
@@ -301,17 +337,7 @@ validate_openapi_document() {
     return 1
   }
 
-  jq -e '
-    type == "object"
-    and (.openapi | type == "string")
-    and (.info | type == "object")
-    and (.paths | type == "object")
-    and (.paths | length > 0)
-    and (.servers | type == "array")
-    and (.servers | length > 0)
-    and (has("status") | not)
-    and (has("error") | not)
-  ' "$openapi_file" >/dev/null || {
+  openapi_document_has_required_structure "$openapi_file" || {
     echo "OpenAPI validation response preview for ${target_name}:" >&2
     jq -c '{
       openapi,
@@ -328,16 +354,7 @@ validate_openapi_document() {
     return 1
   }
 
-  jq -e '
-    . as $root
-    | def unescape_pointer: gsub("~1"; "/") | gsub("~0"; "~");
-      def refpath: ltrimstr("#/") | split("/") | map(unescape_pointer);
-      [
-        .. | objects | .["$ref"]? | select(type == "string" and startswith("#/")) as $ref
-        | select((try ($root | getpath($ref | refpath)) catch null) == null)
-      ]
-      | length == 0
-  ' "$openapi_file" >/dev/null || {
+  openapi_document_has_resolved_local_refs "$openapi_file" || {
     record_scan_error "$target_name" "OpenAPI validation: FAILED - unresolved local \$ref"
     return 1
   }
@@ -355,15 +372,159 @@ validate_openapi_document() {
 finish_dast() {
   local exit_status=$?
 
-  trap - INT TERM
+  trap - EXIT INT TERM
+  set +e
   terminate_api_workers
   report_timing "DAST total" "$DAST_SCRIPT_STARTED_AT"
+  report_dast_evidence
   if [[ "${DAST_STACK_READY:-false}" == "true" ]]; then
     cleanup_ci_compose_env_file
   else
     collect_compose_logs_and_cleanup
   fi
-  return "$exit_status"
+  exit "$exit_status"
+}
+
+zap_alert_counts() {
+  local report_path="$1"
+
+  jq -er '
+    def risk:
+      (.riskcode // .riskCode // "0")
+      | tostring
+      | tonumber;
+    def alerts:
+      if (.site | type) == "array" then [ .site[]?.alerts[]? ]
+      elif (.alerts | type) == "array" then [ .alerts[]? ]
+      else [] end;
+    alerts as $alerts
+    | [
+        ($alerts | map(select(risk >= 3)) | length),
+        ($alerts | map(select(risk == 2)) | length),
+        ($alerts | map(select(risk == 1)) | length),
+        ($alerts | map(select(risk == 0)) | length)
+      ]
+    | @tsv
+  ' "$report_path"
+}
+
+dast_target_has_scan_error() {
+  local target_name="$1"
+  local error
+
+  for error in "${SCAN_ERRORS[@]:-}"; do
+    [[ "$error" == "${target_name}:"* ]] && return 0
+  done
+  return 1
+}
+
+dast_target_evidence() {
+  local target_name="$1"
+  local report_path="${ZAP_REPORT_DIR}/${target_name}.json"
+  local counts
+  local high_count
+  local medium_count
+  local low_count
+  local info_count
+  local target_status
+
+  if [[ ! -s "$report_path" ]] || ! jq empty "$report_path" >/dev/null 2>&1 || \
+    ! counts="$(zap_alert_counts "$report_path" 2>/dev/null)" || \
+    ! read -r high_count medium_count low_count info_count <<<"$counts" || \
+    [[ ! "$high_count" =~ ^[0-9]+$ || ! "$medium_count" =~ ^[0-9]+$ || \
+      ! "$low_count" =~ ^[0-9]+$ || ! "$info_count" =~ ^[0-9]+$ ]]; then
+    printf '%s\t-\t-\t-\t-\tERROR\n' "$target_name"
+    return
+  fi
+
+  if dast_target_has_scan_error "$target_name"; then
+    target_status="ERROR"
+  elif (( high_count > 0 )); then
+    target_status="FAIL"
+  else
+    target_status="PASS"
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$target_name" "$high_count" "$medium_count" "$low_count" "$info_count" "$target_status"
+}
+
+report_dast_evidence() {
+  local target_name
+  local display_name
+  local scan_type
+  local high_count
+  local medium_count
+  local low_count
+  local info_count
+  local target_status
+  local openapi_valid_count=0
+  local technical_errors=0
+  local target_errors=0
+  local total_high=0
+  local gate_status="PASSED"
+  local api
+  local openapi_file
+  local -a targets=(client gateway users-api games-api library-api order-api payment-api)
+
+  for api in "${AUTHENTICATED_APIS[@]}"; do
+    openapi_file="${ZAP_REPORT_DIR}/${api}-api.openapi.json"
+    if [[ -s "$openapi_file" ]] && jq empty "$openapi_file" >/dev/null 2>&1 && \
+      openapi_document_has_required_structure "$openapi_file" >/dev/null 2>&1 && \
+      openapi_document_has_resolved_local_refs "$openapi_file" >/dev/null 2>&1; then
+      openapi_valid_count=$((openapi_valid_count + 1))
+    fi
+  done
+
+  report_header "OWASP ZAP - DYNAMIC APPLICATION SECURITY TEST"
+  report_pipeline_context
+  report_field "Authentication" "$DAST_AUTH_STATUS"
+  report_field "OpenAPI validation" "${openapi_valid_count}/${#AUTHENTICATED_APIS[@]} VALID"
+  printf '\n'
+  report_table_header "Target             Scan type              HIGH  MEDIUM  LOW  INFO  Status"
+
+  for target_name in "${targets[@]}"; do
+    IFS=$'\t' read -r _ high_count medium_count low_count info_count target_status < <(
+      dast_target_evidence "$target_name"
+    )
+    case "$target_name" in
+      client)
+        display_name="Frontend"
+        scan_type="Full Scan"
+        ;;
+      gateway)
+        display_name="API Gateway"
+        scan_type="Baseline Scan"
+        ;;
+      *)
+        display_name="${target_name%-api} Service"
+        display_name="${display_name^}"
+        scan_type="Authenticated API"
+        ;;
+    esac
+    printf '%-18s %-22s %4s %7s %4s %5s %7s\n' \
+      "$display_name" "$scan_type" "$high_count" "$medium_count" \
+      "$low_count" "$info_count" "$target_status"
+    if [[ "$target_status" == "ERROR" ]]; then
+      target_errors=$((target_errors + 1))
+    fi
+    if [[ "$high_count" =~ ^[0-9]+$ ]]; then
+      total_high=$((total_high + high_count))
+    fi
+  done
+
+  technical_errors=$target_errors
+  report_separator
+  printf '\n'
+  report_field "Technical scan errors" "$technical_errors"
+  report_field "Total HIGH findings" "$total_high"
+  report_field "Security policy" "HIGH findings are blocking"
+  if (( technical_errors > 0 || ${#SCAN_ERRORS[@]} > 0 )); then
+    gate_status="ERROR"
+  elif (( total_high > 0 )); then
+    gate_status="FAILED"
+  fi
+  report_field "DAST SECURITY GATE" "$gate_status"
+  report_footer
 }
 
 gate_high_risk_alerts() {
@@ -385,24 +546,7 @@ gate_high_risk_alerts() {
     return 1
   }
 
-  counts="$(jq -r '
-    def risk:
-      (.riskcode // .riskCode // "0")
-      | tostring
-      | tonumber;
-    def alerts:
-      if (.site | type) == "array" then [ .site[]?.alerts[]? ]
-      elif (.alerts | type) == "array" then [ .alerts[]? ]
-      else [] end;
-    alerts as $alerts
-    | [
-        ($alerts | map(select(risk >= 3)) | length),
-        ($alerts | map(select(risk == 2)) | length),
-        ($alerts | map(select(risk == 1)) | length),
-        ($alerts | map(select(risk == 0)) | length)
-      ]
-    | @tsv
-  ' "$report_path")"
+  counts="$(zap_alert_counts "$report_path")"
   read -r high_count medium_count low_count info_count <<< "$counts"
 
   echo "ZAP summary for ${target_name}: scan_success=true high_count=${high_count} medium_count=${medium_count} low_count=${low_count} info_count=${info_count}"

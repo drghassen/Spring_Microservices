@@ -18,6 +18,16 @@ readonly GATEWAY_DISCOVERY_HEALTH_URL="${GATEWAY_DISCOVERY_HEALTH_URL:-http://lo
 readonly CI_DAST_FIXTURE_USERNAME="admin"
 readonly CI_DAST_FIXTURE_PASSWORD="ci-compose-fixture-admin"
 
+# Integration entry points replace these no-op hooks with evidence collectors.
+# DAST and image build callers keep their existing behavior.
+integration_evidence_check_started() {
+  :
+}
+
+integration_evidence_check_passed() {
+  :
+}
+
 timing_now() {
   date +%s
 }
@@ -382,10 +392,13 @@ wait_for_application_stack() {
   local eureka_apps
   local eureka_ready=0
 
+  integration_evidence_check_started "Application stack"
   ci_compose config -q
   ci_compose up -d --no-build --wait --wait-timeout 300 \
     mongodb postgresql "${APP_SERVICES[@]}"
+  integration_evidence_check_passed "Application stack"
 
+  integration_evidence_check_started "Health checks"
   for endpoint in \
     http://localhost:8888/actuator/health \
     http://localhost:8761/actuator/health \
@@ -393,7 +406,9 @@ wait_for_application_stack() {
     http://localhost/; do
     curl --fail --retry 12 --retry-delay 5 --retry-connrefused "$endpoint"
   done
+  integration_evidence_check_passed "Health checks"
 
+  integration_evidence_check_started "Eureka / service registration"
   for _ in $(seq 1 24); do
     if eureka_apps="$(curl --silent --show-error --fail --retry 3 --retry-delay 2 --retry-connrefused \
       -H 'Accept: application/json' http://localhost:8761/eureka/apps)"; then
@@ -412,12 +427,17 @@ wait_for_application_stack() {
     echo "Eureka did not converge to exactly one instance for every expected application within two minutes." >&2
     exit 1
   }
+  integration_evidence_check_passed "Eureka / service registration"
 
+  integration_evidence_check_started "Gateway availability"
   wait_for_gateway_service_discovery
+  integration_evidence_check_passed "Gateway availability"
 }
 
 run_integration_smoke_checks() {
   local gateway_url="http://localhost:8222"
+
+  integration_evidence_check_started "Smoke tests"
 
   assert_http_status "login endpoint is reachable" 401 \
     "${gateway_url}/api/v1/auth/login" \
@@ -440,4 +460,6 @@ run_integration_smoke_checks() {
   assert_http_status "automatic Eureka route is not exposed" 404 \
     "${gateway_url}/GAMES-SERVICE/api/v1/games/purchase" \
     -X POST -H 'Content-Type: application/json' --data '[]'
+
+  integration_evidence_check_passed "Smoke tests"
 }
