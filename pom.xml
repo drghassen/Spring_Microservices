@@ -79,7 +79,7 @@
 
         <log4j2.version>2.25.4</log4j2.version>
 
-        <tomcat.version>10.1.55</tomcat.version>
+        <tomcat.version>10.1.59</tomcat.version>
         <spring-data-commons.version>3.5.12</spring-data-commons.version>
         <spring-data-mongodb.version>4.5.12</spring-data-mongodb.version>
         <spring-framework.version>6.2.19</spring-framework.version>
