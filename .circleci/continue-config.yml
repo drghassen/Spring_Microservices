@@ -351,7 +351,11 @@ jobs:
       - load-candidate-images
       - run:
           name: Report evidence - Trivy image gate
-          command: bash .circleci/scripts/scan-application-images.sh
+          command: |
+            mkdir -p reports
+            set -o pipefail
+            bash .circleci/scripts/scan-application-images.sh 2>&1 \
+              | tee reports/trivy-image-console.log
       - send-security-alert-on-failure:
           scanner: Trivy container image scan
           reports: reports/trivy-images
@@ -437,7 +441,11 @@ jobs:
       - load-candidate-images
       - run:
           name: Report evidence - OWASP ZAP DAST
-          command: bash .circleci/scripts/run-dast.sh
+          command: |
+            mkdir -p reports
+            set -o pipefail
+            bash .circleci/scripts/run-dast.sh 2>&1 \
+              | tee reports/owasp-zap-console.log
       - send-security-alert-on-failure:
           scanner: OWASP ZAP DAST scan
           reports: reports/zap
@@ -458,7 +466,11 @@ jobs:
       - load-candidate-images
       - run:
           name: Report evidence - Integration validation and OWASP ZAP DAST
-          command: bash .circleci/scripts/run-container-integration-and-dast.sh
+          command: |
+            mkdir -p reports
+            set -o pipefail
+            bash .circleci/scripts/run-container-integration-and-dast.sh 2>&1 \
+              | tee reports/integration-dast-console.log
       - send-security-alert-on-failure:
           scanner: Container integration and OWASP ZAP DAST
           reports: reports

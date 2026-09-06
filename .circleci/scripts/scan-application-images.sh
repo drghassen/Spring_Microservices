@@ -77,6 +77,8 @@ report_trivy_image_evidence() {
   report_separator
   printf '\n'
   report_field "Images scanned" "$images_scanned"
+  report_field "Images failed" "$failed_count"
+  report_field "Technical errors" "$error_count"
   report_field "Total HIGH" "$total_high"
   report_field "Total CRITICAL" "$total_critical"
   report_field "Reports" "reports/trivy-images/*.json"
@@ -85,6 +87,11 @@ report_trivy_image_evidence() {
   elif (( failed_count > 0 )); then
     gate_status="FAILED"
   fi
+  case "$gate_status" in
+    PASSED) report_field "Action" "None - all scanned images comply with the policy" ;;
+    FAILED) report_field "Action" "Remediate the HIGH/CRITICAL findings shown above" ;;
+    *) report_field "Action" "Inspect the technical errors and JSON reports" ;;
+  esac
   report_field "SECURITY GATE" "$gate_status"
   report_footer
 }
@@ -101,6 +108,14 @@ finish_trivy_image_scan() {
 }
 
 trap finish_trivy_image_scan EXIT
+
+report_header "TRIVY IMAGE SCAN - EXECUTION PLAN"
+report_pipeline_context
+report_field "Candidate tag" "$IMAGE_TAG"
+report_field "Images expected" "${#JAVA_SERVICES[@]}"
+report_field "Vulnerability policy" "HIGH = 0 / CRITICAL = 0"
+report_field "Final evidence" "Printed at the end of this job"
+report_footer
 
 trivy() {
   docker run --rm \
@@ -157,6 +172,7 @@ gate_high_or_critical_findings() {
 
 mapfile -t image_references < <(candidate_image_references "${JAVA_SERVICES[@]}")
 
+echo "Trivy phase 1/3: downloading the vulnerability database."
 if ! trivy image \
   --download-db-only \
   --timeout 30m \
@@ -171,6 +187,7 @@ if ! trivy image \
   exit 2
 fi
 
+echo "Trivy phase 2/3: downloading the Java vulnerability database."
 if ! trivy image \
   --download-java-db-only \
   --timeout 30m \
@@ -187,10 +204,16 @@ fi
 
 image_scan_error=0
 image_vulnerabilities_found=0
+image_scan_index=0
+echo "Trivy phase 3/3: scanning candidate container images."
 for image in "${image_references[@]}"; do
+  image_scan_index=$(( image_scan_index + 1 ))
   service="${image#*/}"
   service="${service%%:*}"
   report="reports/trivy-images/${service}.json"
+
+  printf 'Trivy image %d/%d: service=%s image=%s\n' \
+    "$image_scan_index" "${#image_references[@]}" "$service" "$image"
 
   rm -f -- "$report"
 

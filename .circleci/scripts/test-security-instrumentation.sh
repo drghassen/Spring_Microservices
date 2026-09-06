@@ -4,6 +4,10 @@ set -Eeuo pipefail
 
 readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly IMAGE_LIBRARY="${REPOSITORY_ROOT}/.circleci/scripts/lib/application-images.sh"
+readonly SONAR_EVIDENCE="${REPOSITORY_ROOT}/.circleci/scripts/lib/sonar-evidence.sh"
+readonly BACKEND_SONAR_SCRIPT="${REPOSITORY_ROOT}/.circleci/scripts/backend-sonar.sh"
+readonly FRONTEND_SONAR_SCRIPT="${REPOSITORY_ROOT}/.circleci/scripts/frontend-sonar.sh"
+readonly BACKEND_SONAR_ARTIFACT_SCRIPT="${REPOSITORY_ROOT}/.circleci/scripts/prepare-backend-sonar-artifacts.sh"
 readonly DTRACK_SCRIPT="${REPOSITORY_ROOT}/.circleci/scripts/publish-sboms-dependency-track.sh"
 readonly DAST_SCRIPT="${REPOSITORY_ROOT}/.circleci/scripts/run-dast.sh"
 readonly CONTINUE_CONFIG="${REPOSITORY_ROOT}/.circleci/continue-config.yml"
@@ -101,6 +105,133 @@ test_all_runtime_sboms_remain() {
   [[ "${#APP_SERVICES[@]}" -eq 9 ]] || return 1
   [[ "${APP_SERVICES[*]}" == "${expected_services[*]}" ]] || return 1
   grep -Fq 'for service in "${APP_SERVICES[@]}"; do' "$DTRACK_SCRIPT"
+}
+
+test_sonar_failure_evidence_uses_quality_gate_response() {
+  local work_directory
+  local scanner_log
+  local gate_response
+  local output
+
+  work_directory="$(mktemp -d)"
+  scanner_log="${work_directory}/scanner.log"
+  gate_response="${work_directory}/quality-gate.json"
+  output="${work_directory}/summary.log"
+
+  cat > "$scanner_log" <<'EOF'
+98 files indexed
+Analysis report uploaded in 32ms
+Analyzed 32 file(s) with current program
+QUALITY GATE STATUS: FAILED
+EOF
+  cat > "$gate_response" <<'EOF'
+{
+  "projectStatus": {
+    "status": "ERROR",
+    "conditions": [
+      {
+        "status": "ERROR",
+        "metricKey": "new_coverage",
+        "comparator": "LT",
+        "errorThreshold": "80",
+        "actualValue": "0.0"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_security_rating",
+        "comparator": "GT",
+        "errorThreshold": "1",
+        "actualValue": "1"
+      }
+    ]
+  }
+}
+EOF
+
+  bash -c '
+    set -euo pipefail
+    source "$1"
+    report_sonar_evidence \
+      "SONARQUBE FRONTEND QUALITY GATE" \
+      "Internship-Proxym-frontend" \
+      "LCOV PRESENT" \
+      2 "$2" "$3"
+  ' _ "$SONAR_EVIDENCE" "$scanner_log" "$gate_response" > "$output"
+
+  if ! grep -Fq 'SONARQUBE FRONTEND QUALITY GATE' "$output" || \
+    ! grep -Eq '^Files indexed[[:space:]]+: 98$' "$output" || \
+    ! grep -Eq '^TypeScript files[[:space:]]+: 32 analyzed$' "$output" || \
+    ! grep -Eq '^new_coverage[[:space:]]+0\.0[[:space:]]+>= 80[[:space:]]+FAIL$' "$output" || \
+    ! grep -Eq '^Failed conditions[[:space:]]+: 1$' "$output" || \
+    ! grep -Eq '^QUALITY GATE[[:space:]]+: FAILED$' "$output"; then
+    rm -rf -- "$work_directory"
+    return 1
+  fi
+
+  rm -rf -- "$work_directory"
+}
+
+test_sonar_technical_error_rejects_invalid_gate_response() {
+  local work_directory
+  local scanner_log
+  local gate_response
+  local output
+
+  work_directory="$(mktemp -d)"
+  scanner_log="${work_directory}/scanner.log"
+  gate_response="${work_directory}/quality-gate.json"
+  output="${work_directory}/summary.log"
+
+  printf '%s\n' 'ERROR SonarQube server cannot be reached' > "$scanner_log"
+  printf '%s\n' '{"errors":[{"msg":"Insufficient privileges"}]}' > "$gate_response"
+
+  bash -c '
+    set -euo pipefail
+    source "$1"
+    report_sonar_evidence \
+      "SONARQUBE FRONTEND QUALITY GATE" \
+      "Internship-Proxym-frontend" \
+      "LCOV PRESENT" \
+      2 "$2" "$3"
+  ' _ "$SONAR_EVIDENCE" "$scanner_log" "$gate_response" > "$output"
+
+  if ! grep -Eq '^Quality Gate API[[:space:]]+: NOT AVAILABLE$' "$output" || \
+    ! grep -Eq '^Action[[:space:]]+: Inspect the scanner log and SonarQube Compute Engine$' "$output" || \
+    ! grep -Eq '^QUALITY GATE[[:space:]]+: ERROR$' "$output"; then
+    rm -rf -- "$work_directory"
+    return 1
+  fi
+
+  rm -rf -- "$work_directory"
+}
+
+test_sonar_scripts_preserve_gate_and_coverage_policy() {
+  grep -Fq 'exit "$scanner_status"' "$BACKEND_SONAR_SCRIPT" || return 1
+  grep -Fq 'exit "$scanner_status"' "$FRONTEND_SONAR_SCRIPT" || return 1
+  grep -Fq -- '-Dsonar.coverage.exclusions=src/main.ts' "$FRONTEND_SONAR_SCRIPT" || return 1
+  grep -Fq 'sonar_fetch_quality_gate' "$BACKEND_SONAR_SCRIPT" || return 1
+  grep -Fq 'sonar_fetch_quality_gate' "$FRONTEND_SONAR_SCRIPT"
+}
+
+test_trivy_and_dast_console_evidence_is_preserved() {
+  grep -Fq 'tee reports/trivy-image-console.log' "$CONTINUE_CONFIG" || return 1
+  grep -Fq 'tee reports/owasp-zap-console.log' "$CONTINUE_CONFIG" || return 1
+  grep -Fq 'tee reports/integration-dast-console.log' "$CONTINUE_CONFIG" || return 1
+  grep -Fq 'report_field "Images failed" "$failed_count"' \
+    "${REPOSITORY_ROOT}/.circleci/scripts/scan-application-images.sh" || return 1
+  grep -Fq 'report_field "DAST SECURITY GATE" "$gate_status"' "$DAST_SCRIPT" || return 1
+  grep -Fq 'report_field "Action"' "$DAST_SCRIPT"
+}
+
+test_backend_sonar_artifacts_require_coverage() {
+  grep -Fq 'JaCoCo execution data exists but its XML report is missing' \
+    "$BACKEND_SONAR_ARTIFACT_SCRIPT" || return 1
+  grep -Fq 'No JaCoCo XML reports were staged for SonarQube.' \
+    "$BACKEND_SONAR_ARTIFACT_SCRIPT" || return 1
+  grep -Fq 'No staged JaCoCo XML reports are available for SonarQube.' \
+    "$BACKEND_SONAR_ARTIFACT_SCRIPT" || return 1
+  grep -Fq 'report_field "JaCoCo XML reports" "$report_count"' \
+    "$BACKEND_SONAR_ARTIFACT_SCRIPT"
 }
 
 test_authentication_precedes_api_scans() {
@@ -521,6 +652,16 @@ assert_file_contains "DTrack parallelism remains three" \
   'readonly DTRACK_PARALLELISM="${DTRACK_PARALLELISM:-3}"' "$DTRACK_SCRIPT"
 test_all_runtime_sboms_remain || fail "all nine runtime application SBOMs remain"
 pass "all nine runtime application SBOMs remain"
+test_sonar_failure_evidence_uses_quality_gate_response || fail "Sonar evidence exposes the real failed condition"
+pass "Sonar evidence exposes the real failed condition"
+test_sonar_technical_error_rejects_invalid_gate_response || fail "Sonar evidence distinguishes technical errors"
+pass "Sonar evidence distinguishes technical errors"
+test_sonar_scripts_preserve_gate_and_coverage_policy || fail "Sonar scripts preserve scanner exits and bootstrap coverage policy"
+pass "Sonar scripts preserve scanner exits and bootstrap coverage policy"
+test_backend_sonar_artifacts_require_coverage || fail "Backend Sonar artifacts require and report JaCoCo coverage"
+pass "Backend Sonar artifacts require and report JaCoCo coverage"
+test_trivy_and_dast_console_evidence_is_preserved || fail "Trivy and DAST console evidence is clear and preserved"
+pass "Trivy and DAST console evidence is clear and preserved"
 test_parallelism_default_and_validation || fail "DAST API parallelism defaults to three and validates one through three"
 pass "DAST API parallelism defaults to three and validates one through three"
 test_parallelism_one_is_sequential || fail "DAST API parallelism one is sequential"

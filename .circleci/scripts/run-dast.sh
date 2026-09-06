@@ -518,11 +518,17 @@ report_dast_evidence() {
   report_field "Technical scan errors" "$technical_errors"
   report_field "Total HIGH findings" "$total_high"
   report_field "Security policy" "HIGH findings are blocking"
+  report_field "JSON reports" "reports/zap/*.json"
   if (( technical_errors > 0 || ${#SCAN_ERRORS[@]} > 0 )); then
     gate_status="ERROR"
   elif (( total_high > 0 )); then
     gate_status="FAILED"
   fi
+  case "$gate_status" in
+    PASSED) report_field "Action" "None - all seven DAST targets comply with the policy" ;;
+    FAILED) report_field "Action" "Remediate the HIGH findings shown above" ;;
+    *) report_field "Action" "Inspect authentication, connectivity, and scan errors" ;;
+  esac
   report_field "DAST SECURITY GATE" "$gate_status"
   report_footer
 }

@@ -6,12 +6,12 @@
     "strict": true,
     "skipLibCheck": true,
     "experimentalDecorators": true,
+    "types": [
+      "jasmine"
+    ],
     "noEmit": true
   },
   "include": [
     "src/**/*.ts"
-  ],
-  "exclude": [
-    "src/**/*.spec.ts"
   ]
 }
