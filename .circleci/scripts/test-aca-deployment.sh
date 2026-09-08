@@ -659,6 +659,110 @@ test_redis_bootstrap_refuses_unrelated_create() {
   inspect_plan_json "$fixture" redis-bootstrap redis-bootstrap '["gateway"]'
 }
 
+test_redis_bootstrap_allows_migration_job_image_only_update() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.apps.azurerm_container_app_job.database_migrations' \
+    '{"template":[{"container":[{"image":"fixture-current"}]}]}' \
+    '{"template":[{"container":[{"image":"fixture-candidate"}]}]}' '{}' '{}'
+  inspect_plan_json "$fixture" "redeployment migration preview" redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_refuses_migration_job_image_plus_cpu() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.apps.azurerm_container_app_job.database_migrations' \
+    '{"template":[{"container":[{"image":"fixture-current","cpu":0.25}]}]}' \
+    '{"template":[{"container":[{"image":"fixture-candidate","cpu":0.5}]}]}' '{}' '{}'
+  inspect_plan_json "$fixture" "redeployment migration preview" redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_refuses_migration_job_image_plus_memory() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.apps.azurerm_container_app_job.database_migrations' \
+    '{"template":[{"container":[{"image":"fixture-current","memory":"0.5Gi"}]}]}' \
+    '{"template":[{"container":[{"image":"fixture-candidate","memory":"1Gi"}]}]}' '{}' '{}'
+  inspect_plan_json "$fixture" "redeployment migration preview" redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_refuses_migration_job_image_plus_secret() {
+  local fixture
+  fixture="$(mktemp)"
+  jq -n '{
+    resource_changes: [{
+      address: "module.apps.azurerm_container_app_job.database_migrations",
+      change: {
+        actions: ["update"],
+        before: {"template":[{"container":[{"image":"fixture-current"}]}],"secret":[{"name":"s","value":"old"}]},
+        after:  {"template":[{"container":[{"image":"fixture-candidate"}]}],"secret":[{"name":"s","value":"new"}]},
+        before_sensitive: {"secret": true},
+        after_sensitive:  {"secret": true}
+      }
+    }]
+  }' > "$fixture"
+  inspect_plan_json "$fixture" "redeployment migration preview" redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_refuses_migration_job_replace() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["delete","create"]' \
+    'module.apps.azurerm_container_app_job.database_migrations' \
+    '{"template":[{"container":[{"image":"fixture-current"}]}]}' \
+    '{"template":[{"container":[{"image":"fixture-candidate"}]}]}' '{}' '{}'
+  inspect_plan_json "$fixture" "redeployment migration preview" redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_refuses_postgresql_update() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.data.azurerm_postgresql_flexible_server.this' \
+    '{"sku_name":"B_Standard_B1ms"}' '{"sku_name":"B_Standard_B2ms"}' '{}' '{}'
+  inspect_plan_json "$fixture" "redeployment migration preview" redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_refuses_cosmos_update() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.data.azurerm_cosmosdb_account.mongodb' \
+    '{"offer_type":"Standard"}' '{"offer_type":"Premium"}' '{}' '{}'
+  inspect_plan_json "$fixture" "redeployment migration preview" redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_refuses_network_update() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.network.azurerm_virtual_network.this' \
+    '{"address_space":["10.0.0.0/16"]}' '{"address_space":["10.1.0.0/16"]}' '{}' '{}'
+  inspect_plan_json "$fixture" "redeployment migration preview" redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_refuses_identity_update() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["update"]' \
+    'module.identities.azurerm_user_assigned_identity.apps' \
+    '{"name":"old-identity"}' '{"name":"new-identity"}' '{}' '{}'
+  inspect_plan_json "$fixture" "redeployment migration preview" redis-bootstrap '["gateway"]'
+}
+
+test_redis_bootstrap_refuses_any_destroy() {
+  local fixture
+  fixture="$(mktemp)"
+  write_plan_fixture "$fixture" '["delete"]' \
+    'module.apps.azurerm_container_app_job.database_migrations' \
+    '{"template":[{"container":[{"image":"fixture-current"}]}]}' \
+    'null' '{}' '{}'
+  inspect_plan_json "$fixture" "redeployment migration preview" redis-bootstrap '["gateway"]'
+}
+
 test_all_seven_updates_are_classified() {
   local fixture output_file
   fixture="$(mktemp)"
@@ -1304,6 +1408,16 @@ assert_fails "unexpected Terraform resource creation is refused" test_unexpected
 assert_succeeds "Redis bootstrap allows the exact internal Redis Container App creation" test_redis_bootstrap_allows_only_redis_create
 assert_succeeds "Redis bootstrap allows the intended Gateway environment update" test_redis_bootstrap_allows_gateway_environment_update
 assert_fails "Redis bootstrap refuses unrelated resource creation" test_redis_bootstrap_refuses_unrelated_create
+assert_succeeds "Redis bootstrap allows migration-job image-only update" test_redis_bootstrap_allows_migration_job_image_only_update
+assert_fails "Redis bootstrap refuses migration-job image + cpu" test_redis_bootstrap_refuses_migration_job_image_plus_cpu
+assert_fails "Redis bootstrap refuses migration-job image + memory" test_redis_bootstrap_refuses_migration_job_image_plus_memory
+assert_fails "Redis bootstrap refuses migration-job image + secret" test_redis_bootstrap_refuses_migration_job_image_plus_secret
+assert_fails "Redis bootstrap refuses migration-job replace" test_redis_bootstrap_refuses_migration_job_replace
+assert_fails "Redis bootstrap refuses PostgreSQL update" test_redis_bootstrap_refuses_postgresql_update
+assert_fails "Redis bootstrap refuses Cosmos update" test_redis_bootstrap_refuses_cosmos_update
+assert_fails "Redis bootstrap refuses network update" test_redis_bootstrap_refuses_network_update
+assert_fails "Redis bootstrap refuses Managed Identity update" test_redis_bootstrap_refuses_identity_update
+assert_fails "Redis bootstrap refuses any destroy action" test_redis_bootstrap_refuses_any_destroy
 assert_succeeds "sensitive plan value is absent from summary" test_plan_sensitive_value_not_logged
 assert_succeeds "all six app updates and the migration job are classified" test_all_seven_updates_are_classified
 assert_succeeds "routine redeploy preserves consistent healthy-release secrets" test_stable_redeployment_secrets

@@ -529,6 +529,42 @@ inspect_plan_json() {
 
   if ! unexpected_update_count="$(jq -er --argjson allowed "$allowed_application_updates" \
     --arg scope "$allowed_create_scope" '
+    def path_text:
+      reduce .[] as $part ("";
+        . + if ($part | type) == "number" then
+          "[\($part)]"
+        elif . == "" then
+          $part
+        else
+          ".\($part)"
+        end
+      );
+    def changed_paths($before; $after; $before_sensitive; $after_sensitive; $path):
+      if $before == $after then
+        empty
+      elif $before_sensitive == true or $after_sensitive == true then
+        $path
+      elif ($before | type) == "object" and ($after | type) == "object" then
+        (($before | keys_unsorted) + ($after | keys_unsorted) | unique[]) as $key
+        | changed_paths(
+            $before[$key];
+            $after[$key];
+            $before_sensitive[$key];
+            $after_sensitive[$key];
+            $path + [$key]
+          )
+      elif ($before | type) == "array" and ($after | type) == "array" then
+        range(0; [($before | length), ($after | length)] | max) as $index
+        | changed_paths(
+            $before[$index];
+            $after[$index];
+            $before_sensitive[$index];
+            $after_sensitive[$index];
+            $path + [$index]
+          )
+      else
+        $path
+      end;
     if $allowed == null then
       0
     elif (($allowed | type) == "array"
@@ -540,7 +576,19 @@ inspect_plan_json() {
           | select(.address as $address
               | ($addresses | index($address)) == null
               and ($scope != "redis-bootstrap"
-                or $address != "module.apps.azurerm_container_app.redis"))]
+                or $address != "module.apps.azurerm_container_app.redis")
+              and ((
+                $scope == "redis-bootstrap"
+                and $address == "module.apps.azurerm_container_app_job.database_migrations"
+                and .change.actions == ["update"]
+                and ([changed_paths(
+                    .change.before;
+                    .change.after;
+                    .change.before_sensitive;
+                    .change.after_sensitive;
+                    []
+                  ) | path_text] | unique) == ["template[0].container[0].image"]
+              ) | not))]
       | length
     else
       error("invalid application update allowlist")
