@@ -190,7 +190,22 @@ jobs:
             umask 077
 
             source .circleci/scripts/lib/aca-deployment.sh
-            aca_authenticate_with_circleci_oidc
+
+            # A self-hosted machine persists /tmp across jobs. Isolate the
+            # task-agent OIDC downloader from stale files owned by another
+            # runner/service invocation, then remove its private runtime.
+            circleci_oidc_tmpdir="$(mktemp -d "$PWD/.circleci-oidc-tmp.XXXXXX")"
+            cleanup_circleci_oidc_tmpdir() {
+              [[ "$circleci_oidc_tmpdir" == "$PWD"/.circleci-oidc-tmp.* ]] || {
+                echo "Refusing to remove an unexpected CircleCI OIDC runtime directory." >&2
+                return 1
+              }
+              rm -rf -- "$circleci_oidc_tmpdir"
+            }
+            trap cleanup_circleci_oidc_tmpdir EXIT
+            TMPDIR="$circleci_oidc_tmpdir" aca_authenticate_with_circleci_oidc
+            cleanup_circleci_oidc_tmpdir
+            trap - EXIT
 
             az account show --output none --only-show-errors
             az resource list \

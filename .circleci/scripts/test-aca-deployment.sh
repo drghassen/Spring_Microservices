@@ -877,6 +877,13 @@ write_circleci_cli_mock() {
     '    printf "%s\\n" "$TMPDIR" >"$MOCK_CIRCLECI_TMPDIR_LOG"' \
     '  fi' \
     '  if [[ "${MOCK_OIDC_FAILURE:-false}" == true ]]; then exit 1; fi' \
+    '  if [[ -n "${MOCK_OIDC_ATTEMPT_LOG:-}" ]]; then' \
+    '    attempt=0' \
+    '    if [[ -f "$MOCK_OIDC_ATTEMPT_LOG" ]]; then attempt="$(<"$MOCK_OIDC_ATTEMPT_LOG")"; fi' \
+    '    ((attempt += 1))' \
+    '    printf "%s\\n" "$attempt" >"$MOCK_OIDC_ATTEMPT_LOG"' \
+    '    if ((attempt <= ${MOCK_OIDC_FAILURES_BEFORE_SUCCESS:-0})); then exit 1; fi' \
+    '  fi' \
     '  printf "%s\\n" "${MOCK_OIDC_TOKEN:-mock-oidc-token}"' \
     '  exit 0' \
     'fi' \
@@ -1029,6 +1036,33 @@ test_oidc_authentication_uses_resolved_binary_without_logging_token() {
   [[ "$output" != *"$oidc_token"* ]]
 }
 
+test_oidc_token_request_retries_transient_download_failure() {
+  local attempt_log message_log mock_directory oidc_token original_path token
+  mock_directory="$(mktemp -d)"
+  attempt_log="${mock_directory}/attempts.log"
+  message_log="${mock_directory}/messages.log"
+  oidc_token='mock-sensitive-oidc-token'
+  original_path="$PATH"
+  write_circleci_cli_mock "${mock_directory}/circleci-agent" false
+
+  MOCK_OIDC_ATTEMPT_LOG="$attempt_log"
+  MOCK_OIDC_FAILURES_BEFORE_SUCCESS=1
+  MOCK_OIDC_TOKEN="$oidc_token"
+  ACA_OIDC_RETRY_DELAY_SECONDS=0
+  export MOCK_OIDC_ATTEMPT_LOG MOCK_OIDC_FAILURES_BEFORE_SUCCESS MOCK_OIDC_TOKEN
+  export ACA_OIDC_RETRY_DELAY_SECONDS
+  PATH="$mock_directory:$original_path"
+  token="$(aca_request_circleci_oidc_token "${mock_directory}/circleci-agent" 2>"$message_log")"
+  PATH="$original_path"
+  unset MOCK_OIDC_ATTEMPT_LOG MOCK_OIDC_FAILURES_BEFORE_SUCCESS MOCK_OIDC_TOKEN
+  unset ACA_OIDC_RETRY_DELAY_SECONDS
+
+  [[ "$token" == "$oidc_token" ]]
+  [[ "$(<"$attempt_log")" == 2 ]]
+  grep -Fq '[OIDC] Token request failed; retrying in 0 seconds.' "$message_log"
+  if grep -Fq "$oidc_token" "$message_log"; then return 1; fi
+}
+
 test_oidc_generation_failure_fails_closed() {
   local call_log inherited_tmpdir mock_directory oidc_tmpdir_log
   local original_directory original_path output status
@@ -1057,7 +1091,9 @@ test_oidc_generation_failure_fails_closed() {
   MOCK_CIRCLECI_CALL_LOG="$call_log"
   MOCK_CIRCLECI_TMPDIR_LOG="$oidc_tmpdir_log"
   MOCK_OIDC_FAILURE=true
+  ACA_OIDC_RETRY_DELAY_SECONDS=0
   export MOCK_CIRCLECI_CALL_LOG MOCK_CIRCLECI_TMPDIR_LOG MOCK_OIDC_FAILURE
+  export ACA_OIDC_RETRY_DELAY_SECONDS
   PATH="$mock_directory:$original_path"
   TMPDIR="$inherited_tmpdir"
   export TMPDIR
@@ -1066,13 +1102,15 @@ test_oidc_generation_failure_fails_closed() {
   output="$(aca_authenticate_with_circleci_oidc 2>&1)" || status=$?
   cd "$original_directory"
   PATH="$original_path"
+  unset ACA_OIDC_RETRY_DELAY_SECONDS
 
   [[ "$status" -ne 0 ]]
-  grep -Fqx 'circleci-agent:run oidc get --claims {"aud":"api://AzureADTokenExchange"}' \
-    "$call_log"
+  [[ "$(grep -Fc 'circleci-agent:run oidc get --claims {"aud":"api://AzureADTokenExchange"}' \
+    "$call_log")" == 3 ]]
   if grep -q '^login ' "$call_log"; then return 1; fi
   [[ "$(<"$oidc_tmpdir_log")" == "$inherited_tmpdir" ]]
-  [[ "$output" == *"CircleCI failed to issue a custom-audience OIDC token."* ]]
+  [[ "$output" == *"CircleCI failed to issue a custom-audience OIDC token after 3 attempts."* ]]
+  [[ "$output" == *"Check runner connectivity to circleci-binary-releases.s3.amazonaws.com."* ]]
 }
 
 test_oidc_authentication_has_no_private_tmpdir_override() {
@@ -1085,6 +1123,20 @@ test_oidc_authentication_has_no_private_tmpdir_override() {
       "$ACA_DEPLOYMENT_LIB"; then
     return 1
   fi
+}
+
+test_prowler_oidc_uses_job_private_tmpdir() {
+  local prowler_job
+  prowler_job="$(sed -n '/^  prowler-rg-security-scan:/,/^  publish-prowler-defectdojo:/p' \
+    "$ROOT_CONFIG")"
+
+  grep -Fq 'circleci_oidc_tmpdir="$(mktemp -d "$PWD/.circleci-oidc-tmp.XXXXXX")"' \
+    <<<"$prowler_job"
+  grep -Fq 'TMPDIR="$circleci_oidc_tmpdir" aca_authenticate_with_circleci_oidc' \
+    <<<"$prowler_job"
+  grep -Fq 'trap cleanup_circleci_oidc_tmpdir EXIT' <<<"$prowler_job"
+  grep -Fq 'rm -rf -- "$circleci_oidc_tmpdir"' <<<"$prowler_job"
+  if grep -Eq 'chmod|chown' <<<"$prowler_job"; then return 1; fi
 }
 
 test_oidc_selected_account_mismatch_rejected() {
@@ -1274,8 +1326,10 @@ assert_fails "CircleCI OIDC resolution fails closed without a task-agent-compati
 assert_fails "/snap/bin/circleci is never accepted as an environment CLI fallback" test_snap_circleci_is_never_selected_as_fallback
 assert_succeeds "CircleCI preflight reports both paths and the selected Environment CLI" test_circleci_preflight_diagnostics_report_paths_and_selection
 assert_succeeds "OIDC generation uses the resolved binary without logging the token" test_oidc_authentication_uses_resolved_binary_without_logging_token
+assert_succeeds "OIDC generation retries a transient task-agent download failure" test_oidc_token_request_retries_transient_download_failure
 assert_succeeds "OIDC token generation failure stops before Azure login" test_oidc_generation_failure_fails_closed
 assert_succeeds "OIDC authentication inherits TMPDIR and contains no private override" test_oidc_authentication_has_no_private_tmpdir_override
+assert_succeeds "self-hosted Prowler OIDC uses a job-private temporary directory" test_prowler_oidc_uses_job_private_tmpdir
 assert_succeeds "OIDC authentication rejects an unexpected selected Azure subscription" test_oidc_selected_account_mismatch_rejected subscription
 assert_succeeds "OIDC authentication rejects an unexpected selected Azure tenant" test_oidc_selected_account_mismatch_rejected tenant
 assert_succeeds "CircleCI environment CLI is never overwritten" test_circleci_environment_cli_not_overwritten

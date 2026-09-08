@@ -139,6 +139,42 @@ if claims.get("oidc.circleci.com/vcs-ref") != expected_ref:
 PY
 }
 
+aca_request_circleci_oidc_token() {
+  local circleci_environment_cli="$1"
+  local candidate_token
+  local attempt
+  local max_attempts=3
+  local retry_delay_seconds="${ACA_OIDC_RETRY_DELAY_SECONDS:-3}"
+
+  [[ "$retry_delay_seconds" =~ ^[0-9]+$ ]] || {
+    echo "ACA_OIDC_RETRY_DELAY_SECONDS must be a non-negative integer." >&2
+    return 1
+  }
+
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    printf '[OIDC] Requesting CircleCI custom-audience token (attempt %s/%s)...\n' \
+      "$attempt" "$max_attempts" >&2
+    if candidate_token="$(
+      "$circleci_environment_cli" run oidc get \
+        --claims '{"aud":"api://AzureADTokenExchange"}'
+    )"; then
+      printf '%s\n' "$candidate_token"
+      return 0
+    fi
+    unset candidate_token
+
+    if ((attempt < max_attempts)); then
+      printf '[OIDC] Token request failed; retrying in %s seconds.\n' \
+        "$retry_delay_seconds" >&2
+      sleep "$retry_delay_seconds"
+    fi
+  done
+
+  echo "[OIDC] ERROR: CircleCI failed to issue a custom-audience OIDC token after ${max_attempts} attempts." >&2
+  echo "[OIDC] Check runner connectivity to circleci-binary-releases.s3.amazonaws.com." >&2
+  return 1
+}
+
 aca_authenticate_with_circleci_oidc() {
   local circleci_environment_cli
   local oidc_token
@@ -157,11 +193,7 @@ aca_authenticate_with_circleci_oidc() {
 
   circleci_environment_cli="$(aca_resolve_circleci_environment_cli)" || exit 1
   printf 'selected Environment CLI: %s\n' "$circleci_environment_cli"
-  if ! oidc_token="$(
-    "$circleci_environment_cli" run oidc get \
-      --claims '{"aud":"api://AzureADTokenExchange"}'
-  )"; then
-    echo "CircleCI failed to issue a custom-audience OIDC token." >&2
+  if ! oidc_token="$(aca_request_circleci_oidc_token "$circleci_environment_cli")"; then
     exit 1
   fi
   aca_validate_circleci_oidc_token_claims "$oidc_token"
