@@ -1125,18 +1125,13 @@ test_oidc_authentication_has_no_private_tmpdir_override() {
   fi
 }
 
-test_prowler_oidc_uses_job_private_tmpdir() {
+test_prowler_oidc_inherits_runner_tmpdir() {
   local prowler_job
   prowler_job="$(sed -n '/^  prowler-rg-security-scan:/,/^  publish-prowler-defectdojo:/p' \
     "$ROOT_CONFIG")"
 
-  grep -Fq 'circleci_oidc_tmpdir="$(mktemp -d "$PWD/.circleci-oidc-tmp.XXXXXX")"' \
-    <<<"$prowler_job"
-  grep -Fq 'TMPDIR="$circleci_oidc_tmpdir" aca_authenticate_with_circleci_oidc' \
-    <<<"$prowler_job"
-  grep -Fq 'trap cleanup_circleci_oidc_tmpdir EXIT' <<<"$prowler_job"
-  grep -Fq 'rm -rf -- "$circleci_oidc_tmpdir"' <<<"$prowler_job"
-  if grep -Eq 'chmod|chown' <<<"$prowler_job"; then return 1; fi
+  grep -Fq 'aca_authenticate_with_circleci_oidc' <<<"$prowler_job"
+  if grep -Eq 'circleci-oidc-tmp|TMPDIR=' <<<"$prowler_job"; then return 1; fi
 }
 
 test_oidc_selected_account_mismatch_rejected() {
@@ -1329,7 +1324,7 @@ assert_succeeds "OIDC generation uses the resolved binary without logging the to
 assert_succeeds "OIDC generation retries a transient task-agent download failure" test_oidc_token_request_retries_transient_download_failure
 assert_succeeds "OIDC token generation failure stops before Azure login" test_oidc_generation_failure_fails_closed
 assert_succeeds "OIDC authentication inherits TMPDIR and contains no private override" test_oidc_authentication_has_no_private_tmpdir_override
-assert_succeeds "self-hosted Prowler OIDC uses a job-private temporary directory" test_prowler_oidc_uses_job_private_tmpdir
+assert_succeeds "self-hosted Prowler OIDC inherits the runner temporary directory" test_prowler_oidc_inherits_runner_tmpdir
 assert_succeeds "OIDC authentication rejects an unexpected selected Azure subscription" test_oidc_selected_account_mismatch_rejected subscription
 assert_succeeds "OIDC authentication rejects an unexpected selected Azure tenant" test_oidc_selected_account_mismatch_rejected tenant
 assert_succeeds "CircleCI environment CLI is never overwritten" test_circleci_environment_cli_not_overwritten
