@@ -16,8 +16,4 @@
 README.md
 LICENCE
 screens
-ansible
-kubernetes
-project_charts
-postgres
-terraform
+.trivy-cache/

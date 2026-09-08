@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1120" viewBox="0 0 2000 1120" role="img" aria-labelledby="title desc">
+  <title id="title">Architecture Azure cible de l'application microservices</title>
+  <desc id="desc">Architecture cible Azure montrant un client public, Azure Container Apps, les services internes, PostgreSQL et Cosmos DB en accès privé, Azure Container Registry, une identité managée et l'observabilité.</desc>
+
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0b2f68" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#e32219"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0865d8"/>
+    </marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7027a0"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#16823a"/>
+    </marker>
+    <style>
+      text { font-family: "DejaVu Sans", Arial, sans-serif; fill: #10213d; }
+      .rg-title { font-size: 29px; font-weight: 700; fill: #073a86; }
+      .vnet-title { font-size: 25px; font-weight: 700; fill: #086c4c; }
+      .zone-title { font-size: 22px; font-weight: 700; fill: #154caa; }
+      .aca-title { font-size: 26px; font-weight: 700; fill: #163d82; }
+      .box-title { font-size: 21px; font-weight: 700; }
+      .service-title { font-size: 17px; font-weight: 700; }
+      .body { font-size: 17px; }
+      .small { font-size: 15px; }
+      .flow-label { font-size: 16px; font-weight: 700; }
+      .legend { font-size: 15px; }
+      .resource { fill: #fff; stroke: #50709b; stroke-width: 2; rx: 12; filter: url(#shadow); }
+      .public-flow { fill: none; stroke: #e32219; stroke-width: 4; marker-end: url(#arrow-red); }
+      .internal-flow { fill: none; stroke: #0865d8; stroke-width: 3.5; marker-end: url(#arrow-blue); }
+      .config-flow { fill: none; stroke: #0865d8; stroke-width: 3; stroke-dasharray: 10 8; marker-end: url(#arrow-blue); }
+      .data-flow { fill: none; stroke: #7027a0; stroke-width: 4; marker-end: url(#arrow-purple); }
+      .observe-flow { fill: none; stroke: #16823a; stroke-width: 3.5; marker-end: url(#arrow-green); }
+      .acr-flow { fill: none; stroke: #0865d8; stroke-width: 3.5; stroke-dasharray: 12 8; marker-end: url(#arrow-blue); }
+    </style>
+  </defs>
+
+  <rect width="2000" height="1120" fill="#ffffff"/>
+
+  <!-- Resource group -->
+  <rect x="150" y="18" width="1825" height="1080" rx="18" fill="#fbfdff" stroke="#1764d6" stroke-width="3"/>
+  <g transform="translate(180 46)">
+    <path d="M0 8 L20 0 L40 8 L40 36 L20 47 L0 36 Z" fill="#e8f3ff" stroke="#1670dc" stroke-width="2"/>
+    <path d="M8 12 L20 7 L32 12 L32 31 L20 38 L8 31 Z" fill="#2c9ad9"/>
+    <text x="58" y="33" class="rg-title">Groupe de ressources : internship_proxym — Sweden Central</text>
+  </g>
+
+  <!-- User outside Azure boundary -->
+  <g>
+    <rect x="18" y="405" width="112" height="166" rx="12" fill="#fff" stroke="#e32219" stroke-width="2.5"/>
+    <circle cx="74" cy="447" r="24" fill="#e8f3ff" stroke="#0871d7" stroke-width="3"/>
+    <path d="M54 447 H94 M74 423 C62 434 62 460 74 471 M74 423 C86 434 86 460 74 471 M52 439 C66 444 82 444 96 439 M52 455 C66 450 82 450 96 455" fill="none" stroke="#0871d7" stroke-width="2"/>
+    <text x="74" y="494" text-anchor="middle" class="box-title">Utilisateur</text>
+    <text x="74" y="519" text-anchor="middle" class="box-title">Internet</text>
+    <text x="74" y="547" text-anchor="middle" class="small">Navigateur Web</text>
+  </g>
+
+  <!-- ACR outside VNet, inside RG -->
+  <g>
+    <rect x="1460" y="35" width="350" height="105" class="resource"/>
+    <circle cx="1507" cy="76" r="28" fill="#1976d2"/>
+    <rect x="1490" y="76" width="53" height="36" rx="3" fill="#4e5b66"/>
+    <path d="M1497 82 V108 M1508 82 V108 M1519 82 V108 M1530 82 V108 M1490 91 H1543" stroke="#fff" stroke-width="2"/>
+    <text x="1560" y="72" class="box-title">Azure Container Registry</text>
+    <text x="1560" y="100" class="body">Images applicatives + SBOM</text>
+    <text x="1560" y="123" class="small">Référencés par digest SHA-256</text>
+  </g>
+
+  <!-- Managed identity badge: permission, not a network hop -->
+  <g>
+    <rect x="1160" y="45" width="255" height="76" rx="12" fill="#fffdf5" stroke="#bb8710" stroke-width="2"/>
+    <circle cx="1193" cy="76" r="13" fill="#ffc21c"/>
+    <path d="M1193 87 V105 M1193 96 H1207 M1203 96 V104" stroke="#b67600" stroke-width="5" stroke-linecap="round"/>
+    <text x="1225" y="74" class="service-title">Managed Identity</text>
+    <text x="1225" y="100" class="body">Rôle AcrPull</text>
+  </g>
+
+  <!-- VNet -->
+  <rect x="180" y="155" width="1640" height="685" rx="18" fill="#fafffd" stroke="#138565" stroke-width="2.5"/>
+  <g transform="translate(210 174)">
+    <path d="M0 17 L17 0 L34 17 L17 34 Z M38 17 L55 0 L72 17 L55 34 Z" fill="none" stroke="#1485d1" stroke-width="4"/>
+    <circle cx="22" cy="17" r="3.5" fill="#69b928"/><circle cx="34" cy="17" r="3.5" fill="#69b928"/><circle cx="46" cy="17" r="3.5" fill="#69b928"/>
+    <text x="91" y="27" class="vnet-title">VNet ghassen-dridi-aca-vnet — 10.80.0.0/16</text>
+  </g>
+
+  <!-- ACR pull flow: actual data direction ACR to ACA -->
+  <path d="M1460 94 H1090 V220" class="acr-flow"/>
+  <text x="1110" y="84" class="flow-label" fill="#0865d8">Images par digest — pull autorisé par Managed Identity / AcrPull</text>
+
+  <!-- ACA subnet and environment -->
+  <rect x="205" y="215" width="895" height="600" rx="18" fill="#f9fcff" stroke="#2384e8" stroke-width="2.5" stroke-dasharray="7 4"/>
+  <text x="652" y="247" text-anchor="middle" class="zone-title">Sous-réseau Azure Container Apps — 10.80.0.0/23</text>
+  <rect x="225" y="263" width="850" height="525" rx="16" fill="#fff" stroke="#2c72da" stroke-width="2.5"/>
+  <g transform="translate(250 281)">
+    <circle cx="24" cy="22" r="22" fill="#683cc5" opacity="0.14"/>
+    <rect x="8" y="8" width="32" height="28" rx="6" fill="none" stroke="#6035c6" stroke-width="4"/>
+    <path d="M2 15 V30 M46 15 V30 M14 3 H35 M14 41 H35" stroke="#6035c6" stroke-width="4" stroke-linecap="round"/>
+    <text x="62" y="31" class="aca-title">Azure Container Apps Environment</text>
+  </g>
+
+  <!-- Main application flow -->
+  <g>
+    <rect x="250" y="405" width="215" height="122" class="resource"/>
+    <path d="M278 431 L302 422 L326 431 L321 476 L302 488 L283 476 Z" fill="#d71920"/>
+    <path d="M302 431 L289 473 H299 L302 464 L313 464 L316 473 H326 L313 431 Z M305 454 L309 443 L312 454 Z" fill="#fff"/>
+    <text x="340" y="447" class="box-title">Client Angular</text>
+    <text x="340" y="473" class="box-title">/ Nginx</text>
+    <text x="358" y="505" text-anchor="middle" class="body">Ingress publique HTTPS</text>
+  </g>
+
+  <g>
+    <rect x="530" y="405" width="190" height="122" class="resource"/>
+    <path d="M560 430 L578 420 L596 430 V452 L578 462 L560 452 Z" fill="#eef2ff" stroke="#4c39c8" stroke-width="3"/>
+    <circle cx="578" cy="441" r="6" fill="#4c39c8"/>
+    <path d="M578 447 V458" stroke="#4c39c8" stroke-width="4"/>
+    <text x="608" y="447" class="box-title">API Gateway</text>
+    <text x="625" y="482" text-anchor="middle" class="body">Ingress interne</text>
+  </g>
+
+  <!-- Redis -->
+  <g>
+    <rect x="580" y="315" width="185" height="70" class="resource"/>
+    <path d="M607 337 L635 327 L663 337 L635 347 Z M607 347 L635 357 L663 347 M607 357 L635 367 L663 357" fill="#d82618" stroke="#9f150e" stroke-width="2"/>
+    <text x="684" y="358" class="box-title">Redis</text>
+  </g>
+
+  <!-- Business services, with explicit data ownership -->
+  <g>
+    <rect x="790" y="360" width="250" height="240" rx="14" fill="#fbfcff" stroke="#50709b" stroke-width="2.2"/>
+    <text x="915" y="391" text-anchor="middle" class="box-title">Microservices métier</text>
+    <rect x="808" y="408" width="214" height="80" rx="9" fill="#f4f8ff" stroke="#6990c5" stroke-width="1.6"/>
+    <text x="915" y="432" text-anchor="middle" class="service-title">Services PostgreSQL</text>
+    <g fill="#e9f2ff" stroke="#0b65d8" stroke-width="2">
+      <rect x="829" y="444" width="32" height="28" rx="5"/><rect x="899" y="444" width="32" height="28" rx="5"/><rect x="969" y="444" width="32" height="28" rx="5"/>
+    </g>
+    <text x="845" y="483" text-anchor="middle" class="small">Games</text><text x="915" y="483" text-anchor="middle" class="small">Order</text><text x="985" y="483" text-anchor="middle" class="small">Payment</text>
+    <rect x="808" y="501" width="214" height="80" rx="9" fill="#f8f5ff" stroke="#8063b2" stroke-width="1.6"/>
+    <text x="915" y="525" text-anchor="middle" class="service-title">Services MongoDB</text>
+    <g fill="#f2eaff" stroke="#7027a0" stroke-width="2">
+      <rect x="862" y="537" width="32" height="28" rx="5"/><rect x="936" y="537" width="32" height="28" rx="5"/>
+    </g>
+    <text x="878" y="576" text-anchor="middle" class="small">User</text><text x="952" y="576" text-anchor="middle" class="small">Library</text>
+  </g>
+
+  <!-- Platform services -->
+  <g>
+    <rect x="300" y="620" width="235" height="82" class="resource"/>
+    <circle cx="335" cy="661" r="22" fill="#1475d0"/><path d="M325 661 H345 M335 651 V671 M320 651 L350 671 M350 651 L320 671" stroke="#fff" stroke-width="3"/>
+    <text x="370" y="656" class="box-title">Config Server</text>
+    <text x="370" y="681" class="small">Configuration centralisée</text>
+  </g>
+  <g>
+    <rect x="585" y="620" width="280" height="82" class="resource"/>
+    <circle cx="620" cy="661" r="23" fill="#72b839"/><path d="M606 667 C614 641 633 641 638 647 C630 670 616 678 606 667 Z" fill="#fff"/>
+    <text x="657" y="653" class="box-title">Discovery Service</text>
+    <text x="657" y="680" class="body">/ Eureka</text>
+  </g>
+
+  <!-- Migration job: separate and only to PostgreSQL -->
+  <g>
+    <rect x="865" y="650" width="170" height="72" class="resource"/>
+    <rect x="885" y="669" width="34" height="34" rx="6" fill="#1673c9"/>
+    <path d="M895 679 H909 M902 672 V696" stroke="#fff" stroke-width="3"/>
+    <text x="930" y="681" class="service-title">Migration Job</text>
+    <text x="930" y="705" class="body">Flyway</text>
+  </g>
+
+  <!-- Public and internal application routes -->
+  <path d="M130 488 H250" class="public-flow"/>
+  <text x="170" y="472" text-anchor="middle" class="flow-label" fill="#e32219">HTTPS</text>
+  <path d="M465 466 H530" class="internal-flow"/>
+  <text x="497" y="449" text-anchor="middle" class="small" fill="#0865d8">Interne</text>
+  <path d="M720 466 H790" class="internal-flow"/>
+  <text x="755" y="449" text-anchor="middle" class="small" fill="#0865d8">Routage</text>
+  <path d="M625 405 V350 H580" class="internal-flow"/>
+  <text x="520" y="343" class="flow-label" fill="#0865d8">Rate limiting</text>
+
+  <!-- Configuration and discovery flows, deliberately excluding the public client -->
+  <path d="M535 650 H555 V548 H625 V527" class="config-flow"/>
+  <text x="544" y="604" class="flow-label" fill="#0865d8">Configuration</text>
+  <path d="M535 674 H760 V590 H835 V600" class="config-flow"/>
+  <text x="615" y="695" class="small" fill="#0865d8">Configuration des services</text>
+  <path d="M535 637 H560 V610 H585" class="config-flow"/>
+  <path d="M720 527 V595 H725 V620" class="config-flow"/>
+  <path d="M865 650 H880 V615 H915 V600" class="config-flow"/>
+  <text x="700" y="608" class="flow-label" fill="#0865d8">Enregistrement et découverte</text>
+
+  <!-- Data subnets -->
+  <rect x="1130" y="220" width="300" height="275" rx="16" fill="#fdfaff" stroke="#9146b7" stroke-width="2.3" stroke-dasharray="7 4"/>
+  <text x="1280" y="252" text-anchor="middle" class="zone-title" fill="#7027a0">Sous-réseau PostgreSQL</text>
+  <text x="1280" y="279" text-anchor="middle" class="box-title" fill="#7027a0">10.80.3.0/28</text>
+  <g>
+    <rect x="1175" y="305" width="210" height="155" class="resource"/>
+    <circle cx="1220" cy="344" r="27" fill="#1769aa"/>
+    <text x="1220" y="352" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">PG</text>
+    <text x="1255" y="332" class="service-title">Azure Database for</text>
+    <text x="1255" y="355" class="service-title">PostgreSQL Flexible Server</text>
+    <text x="1280" y="393" text-anchor="middle" class="body">Accès privé uniquement</text>
+    <rect x="1200" y="409" width="160" height="35" rx="8" fill="#faf7ff" stroke="#9146b7" stroke-width="1.5" stroke-dasharray="5 3"/>
+    <text x="1280" y="432" text-anchor="middle" class="small">DNS privé PostgreSQL</text>
+  </g>
+
+  <rect x="1130" y="520" width="300" height="275" rx="16" fill="#f8fcff" stroke="#2679d8" stroke-width="2.3" stroke-dasharray="7 4"/>
+  <text x="1280" y="552" text-anchor="middle" class="zone-title">Sous-réseau Private Endpoints</text>
+  <text x="1280" y="579" text-anchor="middle" class="box-title" fill="#154caa">10.80.2.0/24</text>
+  <g>
+    <rect x="1175" y="606" width="210" height="155" class="resource"/>
+    <circle cx="1220" cy="646" r="26" fill="#eaf4ff" stroke="#1874ce" stroke-width="2"/>
+    <path d="M1206 646 H1234 M1220 632 V660" stroke="#1874ce" stroke-width="4"/>
+    <circle cx="1220" cy="646" r="5" fill="#5ba72a"/>
+    <text x="1255" y="636" class="service-title">Private Endpoint</text>
+    <text x="1255" y="660" class="service-title">Cosmos DB / MongoDB</text>
+    <text x="1280" y="694" text-anchor="middle" class="body">Adresse IP privée</text>
+    <rect x="1200" y="711" width="160" height="35" rx="8" fill="#f6fbff" stroke="#2679d8" stroke-width="1.5" stroke-dasharray="5 3"/>
+    <text x="1280" y="734" text-anchor="middle" class="small">DNS privé Cosmos DB</text>
+  </g>
+
+  <!-- Cosmos account outside VNet, reached only through the private endpoint -->
+  <g>
+    <rect x="1500" y="595" width="250" height="165" class="resource"/>
+    <ellipse cx="1550" cy="645" rx="28" ry="14" fill="none" stroke="#2478d0" stroke-width="5" transform="rotate(-25 1550 645)"/>
+    <ellipse cx="1550" cy="645" rx="28" ry="14" fill="none" stroke="#2478d0" stroke-width="5" transform="rotate(35 1550 645)"/>
+    <circle cx="1550" cy="645" r="7" fill="#2478d0"/>
+    <text x="1590" y="626" class="box-title">Azure Cosmos DB</text>
+    <text x="1590" y="653" class="body">API MongoDB</text>
+    <text x="1625" y="695" text-anchor="middle" class="box-title" fill="#0a5e3c">Accès public désactivé</text>
+    <text x="1625" y="725" text-anchor="middle" class="body">Accès via Private Endpoint</text>
+  </g>
+
+  <!-- Three strictly separate persistence paths -->
+  <path d="M1040 449 H1100 V382 H1175" class="data-flow"/>
+  <rect x="1055" y="394" width="118" height="44" rx="8" fill="#fff"/>
+  <text x="1114" y="412" text-anchor="middle" class="flow-label" fill="#7027a0">SQL privé</text>
+  <text x="1114" y="431" text-anchor="middle" class="small" fill="#7027a0">Games · Order · Payment</text>
+
+  <path d="M1040 542 H1095 V683 H1175" class="data-flow"/>
+  <rect x="1045" y="565" width="139" height="49" rx="8" fill="#fff"/>
+  <text x="1114" y="584" text-anchor="middle" class="flow-label" fill="#7027a0">MongoDB privé</text>
+  <text x="1114" y="604" text-anchor="middle" class="small" fill="#7027a0">User · Library</text>
+
+  <path d="M1035 686 H1080 V470 H1175" class="data-flow"/>
+  <rect x="1052" y="618" width="128" height="43" rx="8" fill="#fff"/>
+  <text x="1116" y="636" text-anchor="middle" class="flow-label" fill="#7027a0">Migration SQL</text>
+  <text x="1116" y="655" text-anchor="middle" class="small" fill="#7027a0">avant déploiement</text>
+
+  <path d="M1385 683 H1500" class="data-flow"/>
+  <text x="1442" y="665" text-anchor="middle" class="flow-label" fill="#7027a0">Connexion privée</text>
+
+  <!-- DNS note: annotation only, no false traffic arrow -->
+  <rect x="1480" y="785" width="290" height="42" rx="9" fill="#fff" stroke="#687383" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="1625" y="812" text-anchor="middle" class="body">Zones DNS privées liées au VNet</text>
+
+  <!-- Observability area -->
+  <rect x="220" y="865" width="1220" height="185" rx="16" fill="#f8fff9" stroke="#258844" stroke-width="2.3"/>
+  <text x="260" y="902" class="zone-title" fill="#16823a">Observabilité</text>
+  <g>
+    <rect x="380" y="915" width="245" height="95" class="resource"/>
+    <circle cx="425" cy="960" r="25" fill="#eaf7ee" stroke="#16823a" stroke-width="3"/>
+    <path d="M425 960 L441 946 M409 974 A23 23 0 0 1 441 974" fill="none" stroke="#16823a" stroke-width="4"/>
+    <text x="465" y="967" class="box-title">Azure Monitor</text>
+  </g>
+  <g>
+    <rect x="730" y="915" width="280" height="95" class="resource"/>
+    <rect x="758" y="938" width="48" height="48" rx="8" fill="#2577d8"/>
+    <path d="M770 977 V963 M782 977 V950 M794 977 V956" stroke="#fff" stroke-width="5"/>
+    <text x="825" y="956" class="box-title">Log Analytics</text>
+    <text x="825" y="982" class="body">Workspace</text>
+  </g>
+  <g>
+    <rect x="1120" y="915" width="270" height="95" class="resource"/>
+    <circle cx="1162" cy="960" r="26" fill="#f57c00"/>
+    <circle cx="1162" cy="960" r="10" fill="#fff"/>
+    <path d="M1162 927 V937 M1162 983 V993 M1129 960 H1139 M1185 960 H1195 M1139 937 L1146 944 M1178 976 L1185 983 M1185 937 L1178 944 M1146 976 L1139 983" stroke="#f57c00" stroke-width="6"/>
+    <text x="1205" y="956" class="box-title">Azure Managed</text>
+    <text x="1205" y="982" class="box-title">Grafana</text>
+  </g>
+
+  <!-- Independent observability paths -->
+  <path d="M440 788 V855 H502 V915" class="observe-flow"/>
+  <text x="460" y="850" class="flow-label" fill="#16823a">Métriques</text>
+  <path d="M720 788 V842 H870 V915" class="observe-flow"/>
+  <text x="766" y="837" class="flow-label" fill="#16823a">Logs via diagnostic settings</text>
+  <path d="M625 962 H700 V940 H730" class="observe-flow"/>
+  <path d="M1010 962 H1120" class="observe-flow"/>
+  <text x="1064" y="945" text-anchor="middle" class="small" fill="#16823a">Sources Grafana</text>
+
+  <!-- Legend -->
+  <g>
+    <rect x="1480" y="865" width="300" height="185" rx="14" fill="#fff" stroke="#2b6fcf" stroke-width="1.8"/>
+    <text x="1630" y="895" text-anchor="middle" class="box-title">Légende des flux</text>
+    <path d="M1510 925 H1570" stroke="#e32219" stroke-width="4" marker-end="url(#arrow-red)"/><text x="1590" y="931" class="legend">Public HTTPS</text>
+    <path d="M1510 956 H1570" stroke="#0865d8" stroke-width="4" marker-end="url(#arrow-blue)"/><text x="1590" y="962" class="legend">Interne applicatif</text>
+    <path d="M1510 987 H1570" stroke="#0865d8" stroke-width="3" stroke-dasharray="9 7" marker-end="url(#arrow-blue)"/><text x="1590" y="993" class="legend">Config. / découverte / images</text>
+    <path d="M1510 1018 H1570" stroke="#7027a0" stroke-width="4" marker-end="url(#arrow-purple)"/><text x="1590" y="1024" class="legend">Données privées</text>
+    <path d="M1510 1041 H1570" stroke="#16823a" stroke-width="4" marker-end="url(#arrow-green)"/><text x="1590" y="1047" class="legend">Observabilité</text>
+  </g>
+
+  <!-- Scope clarification -->
+  <text x="970" y="1083" text-anchor="middle" class="small" fill="#5b6574">Architecture cible — Cosmos DB est accessible uniquement par Private Endpoint ; aucun flux public n’atteint les microservices ni les bases de données.</text>
+</svg>
