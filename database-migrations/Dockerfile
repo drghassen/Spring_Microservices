@@ -1,4 +1,4 @@
-FROM docker.io/flyway/flyway:13.3.0-alpine@sha256:fb13953f16913efd313f202ec4b4ed34fd2ea14cc51401eb36ea9818c0df2918
+FROM docker.io/flyway/flyway:13.5.0-alpine@sha256:2c76dde88aab87cf058957968d92629e1405810b8de6521afac5cb943e6cd3e4
 
 RUN apk upgrade --no-cache \
     && apk add --no-cache postgresql17-client \
@@ -6,7 +6,7 @@ RUN apk upgrade --no-cache \
         ! -name 'postgresql-42.7.12.jar' -exec rm -rf {} + \
     && for plugin in /flyway/lib/flyway/flyway-database-*.jar; do \
         case "$plugin" in \
-          */flyway-database-postgresql-13.3.0.jar) ;; \
+          */flyway-database-postgresql-13.5.0.jar) ;; \
           *) rm -f -- "$plugin" ;; \
         esac; \
       done \
