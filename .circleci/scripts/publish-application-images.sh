@@ -3,6 +3,8 @@
 set -euo pipefail
 
 source "$(dirname "$0")/lib/application-images.sh"
+# shellcheck source=lib/report-evidence.sh
+source "$(dirname "$0")/lib/report-evidence.sh"
 
 readonly ORAS_IMAGE="ghcr.io/oras-project/oras:v1.3.0@sha256:6ce045ce069a89934d6666b8b49f9c4c0145201bd6de6dbe2aee267814c55468"
 readonly SBOM_ARTIFACT_TYPE="application/vnd.cyclonedx+json"
@@ -14,6 +16,16 @@ readonly DATABASE_MIGRATIONS_SERVICE="database-migrations"
 : "${ACR_PASSWORD:?ACR_PASSWORD must be defined in the acr-publish CircleCI context}"
 
 configure_candidate_images
+
+report_header "DEVSECOPS PIPELINE - AZURE CONTAINER REGISTRY PUBLISHING"
+report_pipeline_context
+report_field "Registry" "$ACR_LOGIN_SERVER"
+report_field "Authentication" "CircleCI context via Docker password-stdin"
+report_field "Candidate tag" "$IMAGE_TAG"
+report_field "Runtime images" "${#APP_SERVICES[@]}"
+report_field "Migration images" "1"
+report_field "SBOM attachment" "ORAS / CycloneDX"
+report_footer
 
 readonly database_migrations_sbom="${SBOM_DIRECTORY}/${DATABASE_MIGRATIONS_SERVICE}/${DATABASE_MIGRATIONS_SERVICE}-${IMAGE_TAG}.cdx.json"
 
@@ -56,6 +68,7 @@ for service in "${APP_SERVICES[@]}"; do
   source_image="${IMAGE_REPOSITORY_PREFIX}/${service}:${IMAGE_TAG}"
   target_image="${ACR_LOGIN_SERVER}/${service}:${IMAGE_TAG}"
 
+  printf '[PUSH] %-25s target=%s\n' "$service" "$target_image"
   docker image tag "$source_image" "$target_image"
   docker push "$target_image"
 
@@ -75,12 +88,15 @@ for service in "${APP_SERVICES[@]}"; do
     "$target_reference" \
     "${service}/${service}-${IMAGE_TAG}.cdx.json:${SBOM_ARTIFACT_TYPE}"
 
+  printf '[PASS] %-25s image and SBOM published\n' "$service"
+
   printf '%s\n' "$target_reference" >> reports/acr-image-manifest.txt
 done
 
 database_migrations_source_image="${IMAGE_REPOSITORY_PREFIX}/${DATABASE_MIGRATIONS_SERVICE}:${IMAGE_TAG}"
 database_migrations_target_image="${ACR_LOGIN_SERVER}/${DATABASE_MIGRATIONS_SERVICE}:${IMAGE_TAG}"
 
+printf '[PUSH] %-25s target=%s\n' "$DATABASE_MIGRATIONS_SERVICE" "$database_migrations_target_image"
 docker image tag "$database_migrations_source_image" "$database_migrations_target_image"
 docker push "$database_migrations_target_image"
 
@@ -101,3 +117,12 @@ oras attach \
   "${DATABASE_MIGRATIONS_SERVICE}/${DATABASE_MIGRATIONS_SERVICE}-${IMAGE_TAG}.cdx.json:${SBOM_ARTIFACT_TYPE}"
 
 printf '%s\n' "$database_migrations_target_reference" >> reports/acr-image-manifest.txt
+
+printf '[PASS] %-25s image and SBOM published\n' "$DATABASE_MIGRATIONS_SERVICE"
+report_header "ACR PUBLISHING SUMMARY"
+report_field "Images published" "$(( ${#APP_SERVICES[@]} + 1 ))"
+report_field "SBOMs attached" "$(( ${#APP_SERVICES[@]} + 1 ))"
+report_field "Failures" "0"
+report_field "Manifest" "reports/acr-image-manifest.txt"
+report_field "RESULT" "ALL QUALIFIED IMAGES PUBLISHED TO ACR"
+report_footer

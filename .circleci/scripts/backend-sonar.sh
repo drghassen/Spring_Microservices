@@ -12,6 +12,14 @@ readonly SONAR_PROJECT_KEY="Internship-Proxym"
 readonly SONAR_SCANNER_LOG="$(mktemp)"
 readonly SONAR_GATE_RESPONSE="$(mktemp)"
 
+report_header "DEVSECOPS PIPELINE - SONARQUBE BACKEND STATIC ANALYSIS"
+report_pipeline_context
+report_field "Project key" "$SONAR_PROJECT_KEY"
+report_field "Scanner" "SonarScanner for Maven 5.7.0.6970"
+report_field "Coverage" "JaCoCo XML"
+report_field "Quality Gate" "WAITING"
+report_footer
+
 cleanup_sonar_files() {
   rm -f -- "$SONAR_SCANNER_LOG" "$SONAR_GATE_RESPONSE"
 }
@@ -39,7 +47,7 @@ if grep -Eq 'QUALITY GATE STATUS: (PASSED|FAILED)' "$SONAR_SCANNER_LOG"; then
 fi
 
 report_sonar_evidence \
-  "SONARQUBE BACKEND QUALITY GATE" \
+  "SONARQUBE BACKEND SUMMARY" \
   "$SONAR_PROJECT_KEY" \
   "${coverage_report_count} JaCoCo XML report(s)" \
   "$scanner_status" \

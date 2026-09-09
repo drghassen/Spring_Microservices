@@ -31,6 +31,16 @@ jobs:
           command: |
             set -euo pipefail
 
+            printf '%s\n' \
+              '==============================================================================' \
+              ' DEVSECOPS PIPELINE - WORKFLOW SELECTION' \
+              '==============================================================================' \
+              "[INFO] Project  : ${CIRCLE_PROJECT_USERNAME:-NOT AVAILABLE}/${CIRCLE_PROJECT_REPONAME:-NOT AVAILABLE}" \
+              "[INFO] Branch   : ${CIRCLE_BRANCH:-NOT AVAILABLE}" \
+              "[INFO] Commit   : ${CIRCLE_SHA1:0:8}" \
+              '[INFO] Strategy : safe Git path filtering' \
+              '------------------------------------------------------------------------------'
+
             current_revision="$PIPELINE_REVISION"
             candidate_base="${PIPELINE_BASE_REVISION:-}"
             comparison_base=""
@@ -72,6 +82,8 @@ jobs:
 
             printf 'Path-filter base selected: %s\n' "$comparison_base"
             printf 'Fail-safe both workflows: %s\n' "$force_both_workflows"
+            printf '%s\n' 'RESULT: WORKFLOW COMPARISON BASE SELECTED' \
+              '=============================================================================='
       - path-filtering/set-parameters:
           base-revision: "$PATH_FILTER_BASE"
           same-base-run: true
@@ -128,7 +140,13 @@ jobs:
                 "oidc.circleci.com/vcs-origin",
                 "oidc.circleci.com/vcs-ref",
             )
+            print("=" * 78)
+            print(" DEVSECOPS PIPELINE - CIRCLECI OIDC CLAIMS AUDIT")
+            print("=" * 78)
+            print("[SECURITY] Only the allowlisted, non-sensitive claims are displayed.")
             print(json.dumps({name: claims.get(name) for name in claim_names}, indent=2))
+            print("RESULT: NON-SENSITIVE OIDC CLAIMS DISPLAYED")
+            print("=" * 78)
             PY
 
   azure-oidc-audit:

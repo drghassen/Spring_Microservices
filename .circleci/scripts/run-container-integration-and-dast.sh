@@ -15,6 +15,14 @@ mkdir -p reports
 ensure_jq
 ensure_curl
 
+report_header "DEVSECOPS PIPELINE - INTEGRATION TESTS & OWASP ZAP"
+report_pipeline_context
+report_field "Runtime" "Docker Compose"
+report_field "Candidate tag" "$IMAGE_TAG"
+report_field "Integration" "Health, Eureka registration, smoke tests, Gateway"
+report_field "DAST" "Frontend, Gateway and authenticated service APIs"
+report_footer
+
 run_timed_step "application stack startup" wait_for_application_stack
 run_timed_step "integration smoke checks" run_integration_smoke_checks
 report_integration_evidence

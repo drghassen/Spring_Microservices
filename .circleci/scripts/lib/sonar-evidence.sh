@@ -167,9 +167,18 @@ report_sonar_evidence() {
   fi
 
   case "$gate_result" in
-    PASSED) report_field "Action" "None" ;;
-    FAILED) report_field "Action" "Fix the failed metric(s) listed above" ;;
-    *) report_field "Action" "Inspect the scanner log and SonarQube Compute Engine" ;;
+    PASSED)
+      report_field "Pipeline gate" "OPEN"
+      report_field "Action" "None"
+      ;;
+    FAILED)
+      report_field "Pipeline gate" "BLOCKED"
+      report_field "Action" "Fix the failed metric(s) listed above"
+      ;;
+    *)
+      report_field "Pipeline gate" "BLOCKED - TECHNICAL ERROR"
+      report_field "Action" "Inspect the scanner log and SonarQube Compute Engine"
+      ;;
   esac
   report_field "QUALITY GATE" "$gate_result"
   report_footer

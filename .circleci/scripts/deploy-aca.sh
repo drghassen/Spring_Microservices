@@ -686,6 +686,10 @@ run_timed_phase() {
 
 run_database_migrations() {
   local execution_name execution_status started_at elapsed_seconds
+  report_section "DATABASE MIGRATION - POSTGRESQL"
+  report_field "Engine" "Flyway"
+  report_field "Execution" "Azure Container Apps Job"
+  report_field "Migration job" "$ACA_MIGRATIONS_JOB_NAME"
   echo "Starting the database migration job."
   execution_name="$(az containerapp job start --name "$ACA_MIGRATIONS_JOB_NAME" \
     --resource-group "$ACA_RESOURCE_GROUP_NAME" --query name \
@@ -708,6 +712,8 @@ run_database_migrations() {
         Succeeded)
           DEPLOY_MIGRATION_RESULT="SUCCEEDED"
           printf 'Migration execution %s succeeded.\n' "$execution_name"
+          report_field "Execution status" "SUCCEEDED"
+          report_field "RESULT" "DATABASE MIGRATION COMPLETED"
           return
           ;;
         Failed | Canceled | Cancelled | Stopped)
@@ -781,6 +787,10 @@ wait_for_healthy_revision() {
 deploy_application_phase() {
   local phase_slug="$1" phase_name="$2" active_applications="$3" application="$4"
   local expected_revision allowed_application_updates
+  report_section "APPLICATION DEPLOYMENT - ${application}"
+  report_field "Target" "Azure Container Apps"
+  report_field "Component" "$application"
+  report_field "Candidate tag" "${IMAGE_TAG:-NOT AVAILABLE}"
   if [[ "$DETECTED_RELEASE_MODE" == "redeploy" ]]; then
     active_applications="$ALL_ACTIVE_APPLICATIONS"
   fi
@@ -801,6 +811,11 @@ deploy_application_wave() {
   local -A expected_revisions=()
   shift 2
   applications=("$@")
+
+  report_section "APPLICATION DEPLOYMENT - BUSINESS SERVICES"
+  report_field "Target" "Azure Container Apps"
+  report_field "Components" "${applications[*]}"
+  report_field "Candidate tag" "${IMAGE_TAG:-NOT AVAILABLE}"
 
   for application in "${applications[@]}"; do
     if [[ "${ROLLOUT_APPLICATION_DIGESTS[$application]}" != \
@@ -845,6 +860,8 @@ assert_public_http_status() {
 
 run_post_deployment_health_checks() {
   local client_fqdn client_url gateway_route_url
+  report_section "POST-DEPLOYMENT HEALTH VALIDATION"
+  report_field "Checks" "Public client and public Gateway games route"
   client_fqdn="$(az containerapp show --name client --resource-group "$ACA_RESOURCE_GROUP_NAME" \
     --query properties.configuration.ingress.fqdn --output tsv --only-show-errors)"
   [[ -n "$client_fqdn" && "$client_fqdn" != "null" ]] || {
@@ -857,6 +874,8 @@ run_post_deployment_health_checks() {
   assert_public_http_status "public Gateway games route" "$gateway_route_url" 200
   DEPLOY_HEALTH_RESULT="PASSED"
   echo "Post-deployment application health checks passed."
+  report_field "Checks passed" "2/2"
+  report_field "RESULT" "DEPLOYMENT VALIDATED SUCCESSFULLY"
 }
 
 prepare_stable_redeployment_secrets() {
@@ -954,6 +973,15 @@ run_plan_only() {
   printf 'ACA plan gate passed: mode=%s add=%s change=%s destroy=%s; no apply executed.\n' \
     "$DETECTED_RELEASE_MODE" "$LAST_PLAN_ADD_COUNT" "$LAST_PLAN_CHANGE_COUNT" \
     "$LAST_PLAN_DESTROY_COUNT"
+
+  report_header "TERRAFORM DEPLOYMENT PREVIEW SUMMARY"
+  report_field "Release mode" "$DETECTED_RELEASE_MODE"
+  report_field "Resources to add" "$LAST_PLAN_ADD_COUNT"
+  report_field "Resources to change" "$LAST_PLAN_CHANGE_COUNT"
+  report_field "Resources to destroy" "$LAST_PLAN_DESTROY_COUNT"
+  report_field "Apply executed" "NO"
+  report_field "RESULT" "TERRAFORM PLAN VALIDATED"
+  report_footer
 }
 
 run_deployment() {
@@ -1138,6 +1166,25 @@ main() {
   if [[ "$operation" == "deploy" ]]; then
     DEPLOY_EVIDENCE_ENABLED=1
   fi
+
+  if [[ "$operation" == "plan" ]]; then
+    report_header "DEVSECOPS PIPELINE - TERRAFORM DEPLOYMENT PREVIEW"
+    report_pipeline_context
+    report_field "Environment" "$ACA_ENVIRONMENT_NAME"
+    report_field "Resource group" "$ACA_RESOURCE_GROUP_NAME"
+    report_field "Operation" "Read-only plan; no apply"
+    report_field "Deletion policy" "Delete actions are refused"
+    report_footer
+  else
+    report_header "DEVSECOPS PIPELINE - CONTROLLED AZURE DEPLOYMENT"
+    report_pipeline_context
+    report_field "Environment" "$ACA_ENVIRONMENT_NAME"
+    report_field "Resource group" "$ACA_RESOURCE_GROUP_NAME"
+    report_field "Image tag" "${IMAGE_TAG:-NOT AVAILABLE}"
+    report_field "Sequence" "Infrastructure, migration, platform, services, client, health"
+    report_footer
+  fi
+
   trap finish_aca_operation EXIT
   validate_release_inputs
   export TF_IN_AUTOMATION=true

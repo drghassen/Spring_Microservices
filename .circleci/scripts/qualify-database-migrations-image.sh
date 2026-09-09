@@ -5,6 +5,8 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/application-images.sh
 source "$(dirname "$0")/lib/application-images.sh"
+# shellcheck source=lib/report-evidence.sh
+source "$(dirname "$0")/lib/report-evidence.sh"
 
 readonly DATABASE_MIGRATIONS_SERVICE="database-migrations"
 readonly DATABASE_MIGRATIONS_DOCKERFILE="database-migrations/Dockerfile"
@@ -26,6 +28,16 @@ ensure_zstd
 
 readonly candidate_image="${IMAGE_REPOSITORY_PREFIX}/${DATABASE_MIGRATIONS_SERVICE}:${IMAGE_TAG}"
 readonly trivy_report="reports/trivy-images/${DATABASE_MIGRATIONS_SERVICE}.json"
+
+report_header "DEVSECOPS PIPELINE - DATABASE MIGRATION IMAGE QUALIFICATION"
+report_pipeline_context
+report_field "Component" "$DATABASE_MIGRATIONS_SERVICE"
+report_field "Candidate image" "$candidate_image"
+report_field "Build" "Docker"
+report_field "Security scan" "Trivy HIGH/CRITICAL"
+report_field "SBOM" "Syft CycloneDX 1.6"
+report_field "Export" "$ARCHIVE_PATH"
+report_footer
 
 trivy() {
   docker run --rm \
@@ -112,3 +124,11 @@ jq -e '.bomFormat == "CycloneDX" and .specVersion == "1.6"' "$SBOM_FILE" >/dev/n
 docker image save "$candidate_image" | zstd --threads=0 --fast --quiet -o "$ARCHIVE_PATH"
 sha256sum "$ARCHIVE_PATH" > "${ARCHIVE_PATH}.sha256"
 printf '%s\n' "$candidate_image" > "${ARCHIVE_DIRECTORY}/image-manifest.txt"
+
+report_header "DATABASE MIGRATION IMAGE SUMMARY"
+report_field "Docker build" "PASSED"
+report_field "Trivy security gate" "PASSED"
+report_field "CycloneDX SBOM" "GENERATED"
+report_field "Image archive" "GENERATED"
+report_field "RESULT" "DATABASE MIGRATION IMAGE QUALIFIED"
+report_footer

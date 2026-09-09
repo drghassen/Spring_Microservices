@@ -15,5 +15,12 @@ mkdir -p reports
 ensure_jq
 ensure_curl
 
+report_header "DEVSECOPS PIPELINE - MICROSERVICES INTEGRATION TESTS"
+report_pipeline_context
+report_field "Runtime" "Docker Compose"
+report_field "Candidate tag" "$IMAGE_TAG"
+report_field "Checks" "Health, Eureka registration, smoke tests, Gateway"
+report_footer
+
 wait_for_application_stack
 run_integration_smoke_checks

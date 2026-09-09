@@ -999,6 +999,17 @@ main() {
   configure_candidate_images
   ensure_jq
   validate_dast_api_parallelism
+
+  report_header "DEVSECOPS PIPELINE - DYNAMIC APPLICATION SECURITY TEST"
+  report_pipeline_context
+  report_field "Security engine" "OWASP ZAP"
+  report_field "Frontend scan" "Full Scan"
+  report_field "Gateway scan" "Baseline Scan"
+  report_field "Authenticated APIs" "${#AUTHENTICATED_APIS[@]}"
+  report_field "Authentication" "JWT fixture credentials (token value hidden)"
+  report_field "Blocking policy" "HIGH alerts are blocking"
+  report_footer
+
   prepare_zap_report_dir
 
   if [[ "${DAST_STACK_READY:-false}" != "true" ]]; then

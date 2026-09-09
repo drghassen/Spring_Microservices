@@ -3,6 +3,8 @@
 set -euo pipefail
 
 source "$(dirname "$0")/lib/application-images.sh"
+# shellcheck source=lib/report-evidence.sh
+source "$(dirname "$0")/lib/report-evidence.sh"
 
 readonly TRIVY_IMAGE="aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f"
 readonly TRIVY_REPORT="reports/trivy-dependencies.json"
@@ -10,6 +12,42 @@ readonly MAVEN_REPOSITORY="${MAVEN_REPOSITORY:-${HOME}/.m2/repository}"
 
 ensure_jq
 mkdir -p reports .trivy-cache
+
+report_dependency_security_summary() {
+  local counts
+  local dependencies
+  local high
+  local critical
+  local status
+
+  counts="$(jq -r '
+    [
+      ([.Results[]?.Packages[]?] | length),
+      ([.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length),
+      ([.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length)
+    ] | @tsv
+  ' "$TRIVY_REPORT")"
+  read -r dependencies high critical <<<"$counts"
+  status="PASSED"
+  if (( high > 0 || critical > 0 )); then
+    status="FAILED"
+  fi
+
+  report_header "DEPENDENCY SECURITY SUMMARY"
+  report_field "Dependencies analysed" "$dependencies"
+  report_field "HIGH vulnerabilities" "$high"
+  report_field "CRITICAL vulnerabilities" "$critical"
+  report_field "DEPENDENCY GATE" "$status"
+  report_footer
+}
+
+report_header "DEVSECOPS PIPELINE - SOFTWARE COMPOSITION ANALYSIS"
+report_pipeline_context
+report_field "Security engine" "Trivy"
+report_field "Scope" "Maven, npm and application libraries"
+report_field "Analysis" "Known dependency CVEs"
+report_field "Blocking policy" "HIGH = 0 / CRITICAL = 0"
+report_footer
 
 ensure_resolved_maven_repository() {
   if [[ ! -d "$MAVEN_REPOSITORY" ]] || \
@@ -87,4 +125,5 @@ trivy fs \
   .
 
 validate_dependency_report
+report_dependency_security_summary
 gate_high_or_critical_vulnerabilities

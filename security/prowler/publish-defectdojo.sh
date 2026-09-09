@@ -67,7 +67,7 @@ PY
     report_generated="YES"
   fi
 
-  report_header "AZURE POST-DEPLOYMENT SECURITY AUDIT"
+  report_header "PROWLER DEFECTDOJO PUBLISHING SUMMARY"
   report_pipeline_context
   report_field "Prowler mode" "READ-ONLY"
   report_field "Scope" "Azure resource group: ${EXPECTED_RESOURCE_GROUP}"
@@ -127,6 +127,15 @@ while (($#)); do
 done
 
 trap finish_prowler_publication EXIT
+
+report_header "DEVSECOPS PIPELINE - PROWLER DEFECTDOJO PUBLISHING"
+report_pipeline_context
+report_field "Source" "Validated Prowler workspace bundle"
+report_field "Resource group" "$EXPECTED_RESOURCE_GROUP"
+report_field "Scan type" "$DD_SCAN_TYPE"
+report_field "DefectDojo test" "$EXPECTED_DD_TEST_ID"
+report_field "Authentication" "API token present in context; value hidden"
+report_footer
 
 for input_path in "$csv_path" "$metadata_path" "$manifest_path"; do
   [[ -n "$input_path" && -f "$input_path" && ! -L "$input_path" && -r "$input_path" ]] || {

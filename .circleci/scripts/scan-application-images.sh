@@ -33,7 +33,7 @@ report_trivy_image_evidence() {
   local failed_count=0
   local gate_status="PASSED"
 
-  report_header "TRIVY IMAGE SECURITY GATE"
+  report_header "CONTAINER IMAGE SECURITY SUMMARY"
   report_pipeline_context
   report_field "Scope" "Java backend container images"
   report_field "Policy" "HIGH = 0 / CRITICAL = 0"
@@ -109,8 +109,9 @@ finish_trivy_image_scan() {
 
 trap finish_trivy_image_scan EXIT
 
-report_header "TRIVY IMAGE SCAN - EXECUTION PLAN"
+report_header "DEVSECOPS PIPELINE - CONTAINER IMAGE SECURITY SCAN"
 report_pipeline_context
+report_field "Security engine" "Trivy"
 report_field "Candidate tag" "$IMAGE_TAG"
 report_field "Images expected" "${#JAVA_SERVICES[@]}"
 report_field "Vulnerability policy" "HIGH = 0 / CRITICAL = 0"

@@ -21,6 +21,14 @@ readonly SONAR_PROJECT_KEY="Internship-Proxym-frontend"
 readonly SONAR_SCANNER_LOG="$(mktemp)"
 readonly SONAR_GATE_RESPONSE="$(mktemp)"
 
+report_header "DEVSECOPS PIPELINE - SONARQUBE FRONTEND STATIC ANALYSIS"
+report_pipeline_context
+report_field "Project key" "$SONAR_PROJECT_KEY"
+report_field "Scanner" "SonarScanner CLI $SONAR_SCANNER_VERSION"
+report_field "Coverage" "LCOV"
+report_field "Quality Gate" "WAITING"
+report_footer
+
 cleanup_sonar_files() {
   rm -f -- "$SONAR_SCANNER_LOG" "$SONAR_GATE_RESPONSE"
 }
@@ -101,7 +109,7 @@ if grep -Eq 'QUALITY GATE STATUS: (PASSED|FAILED)' "$SONAR_SCANNER_LOG"; then
 fi
 
 report_sonar_evidence \
-  "SONARQUBE FRONTEND QUALITY GATE" \
+  "SONARQUBE FRONTEND SUMMARY" \
   "$SONAR_PROJECT_KEY" \
   "LCOV PRESENT ($COVERAGE_REPORT)" \
   "$scanner_status" \

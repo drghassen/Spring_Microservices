@@ -3,6 +3,8 @@
 set -Eeuo pipefail
 
 source "$(dirname "$0")/lib/application-images.sh"
+# shellcheck source=lib/report-evidence.sh
+source "$(dirname "$0")/lib/report-evidence.sh"
 
 readonly SYFT_VERSION="1.50.0"
 readonly SYFT_IMAGE="anchore/syft:v${SYFT_VERSION}@sha256:1288ea4c8b38767b4e620c1e312c8cb26b6e887a99b4f07ab6cd19fc6f225026"
@@ -21,6 +23,15 @@ configure_candidate_images
 ensure_jq
 
 readonly DTRACK_API_BASE="${DTRACK_URL%/}"
+
+report_header "DEVSECOPS PIPELINE - SBOM & DEPENDENCY-TRACK"
+report_pipeline_context
+report_field "SBOM generator" "Syft $SYFT_VERSION"
+report_field "SBOM format" "CycloneDX 1.6 JSON"
+report_field "Candidate tag" "$IMAGE_TAG"
+report_field "Services expected" "${#APP_SERVICES[@]}"
+report_field "Upload parallelism" "$DTRACK_PARALLELISM"
+report_footer
 
 error_for_service() {
   local service="$1"
@@ -471,3 +482,12 @@ validation_started_at="$(timing_now)"
 run_timed_step "merge_upload_summaries" merge_upload_summaries
 run_timed_step "validate_current_outputs" validate_current_outputs
 report_timing "Dependency-Track validation" "$validation_started_at"
+
+report_header "SBOM & DEPENDENCY-TRACK SUMMARY"
+report_field "SBOMs generated" "${#APP_SERVICES[@]}"
+report_field "Projects processed" "${#APP_SERVICES[@]}"
+report_field "Uploads accepted" "${#APP_SERVICES[@]}"
+report_field "SBOM artifacts" "$SBOM_REPORT_ROOT"
+report_field "Upload evidence" "$DTRACK_REPORT_ROOT"
+report_field "RESULT" "DEPENDENCY-TRACK SYNCHRONIZATION COMPLETED"
+report_footer

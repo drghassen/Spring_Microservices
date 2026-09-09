@@ -41,7 +41,7 @@ report_integration_evidence() {
   (( INTEGRATION_EVIDENCE_PRINTED == 0 )) || return 0
   INTEGRATION_EVIDENCE_PRINTED=1
 
-  report_header "INTEGRATION VALIDATION"
+  report_header "MICROSERVICES INTEGRATION TEST SUMMARY"
   report_pipeline_context
   printf '\n'
   report_table_header "Check                                             Result"

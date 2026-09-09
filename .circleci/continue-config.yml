@@ -30,6 +30,16 @@ commands:
             readonly containerapp_extension_file="containerapp-${containerapp_extension_version}-py2.py3-none-any.whl"
             readonly containerapp_extension_sha256="d6971ccf8ca73e03df7e123fa7c85e5e63235bb1ac1c274c26bbc1f509d68115"
 
+            printf '%s\n' \
+              '==============================================================================' \
+              ' DEVSECOPS PIPELINE - AZURE DEPLOYMENT TOOLCHAIN' \
+              '==============================================================================' \
+              "[INFO] Terraform             : ${terraform_version}" \
+              "[INFO] jq                    : ${jq_version}" \
+              "[INFO] Azure containerapp CLI: ${containerapp_extension_version}" \
+              '[SECURITY] Downloads are verified against pinned SHA-256 checksums.' \
+              '------------------------------------------------------------------------------'
+
             for required_command in az curl python3 unzip sha256sum; do
               command -v "$required_command" >/dev/null 2>&1 || {
                 printf '%s is missing from the pinned cimg/azure executor.\n' "$required_command" >&2
@@ -69,6 +79,10 @@ commands:
             terraform version
             jq --version
             az version --output none
+            printf '%s\n' \
+              '------------------------------------------------------------------------------' \
+              'RESULT: AZURE DEPLOYMENT TOOLCHAIN READY' \
+              '=============================================================================='
 
   configure-candidate-image-tag:
     description: Export the pipeline-scoped Docker tag used by every candidate image job.
@@ -538,9 +552,27 @@ jobs:
           name: Validate Terraform configuration without a backend
           command: |
             cd ACA
+            printf '%s\n' \
+              '==============================================================================' \
+              ' DEVSECOPS PIPELINE - TERRAFORM STATIC VALIDATION' \
+              '==============================================================================' \
+              "[INFO] Project     : ${CIRCLE_PROJECT_USERNAME:-NOT AVAILABLE}/${CIRCLE_PROJECT_REPONAME:-NOT AVAILABLE}" \
+              "[INFO] Branch      : ${CIRCLE_BRANCH:-NOT AVAILABLE}" \
+              "[INFO] Commit      : ${CIRCLE_SHA1:0:8}" \
+              '[INFO] Terraform   : 1.15.9' \
+              '[INFO] Scope       : ACA/' \
+              '[INFO] Backend     : disabled' \
+              '[INFO] Checks      : format and configuration validation' \
+              '------------------------------------------------------------------------------'
             terraform fmt -check -recursive
             terraform init -backend=false
             terraform validate
+            printf '%s\n' \
+              '------------------------------------------------------------------------------' \
+              '[PASS] Terraform format       : VALID' \
+              '[PASS] Terraform configuration: VALID' \
+              'RESULT: TERRAFORM VALIDATION PASSED' \
+              '=============================================================================='
 
   plan-aca:
     docker:

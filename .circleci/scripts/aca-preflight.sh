@@ -5,6 +5,8 @@ set -euo pipefail
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/aca-deployment.sh
 source "$(dirname "$0")/lib/aca-deployment.sh"
+# shellcheck source=lib/report-evidence.sh
+source "$(dirname "$0")/lib/report-evidence.sh"
 
 require_preflight_inputs() {
   local required_variable
@@ -46,6 +48,17 @@ initialize_backend_read_only() {
 }
 
 require_preflight_inputs
+
+report_header "DEVSECOPS PIPELINE - AZURE DEPLOYMENT PREFLIGHT"
+report_pipeline_context
+report_field "Target" "Azure Container Apps"
+report_field "Resource group" "$ACA_RESOURCE_GROUP_NAME"
+report_field "Registry" "$ACA_ACR_NAME"
+report_field "Authentication" "CircleCI OIDC federation"
+report_field "Terraform backend" "Read-only validation"
+report_field "Required secrets" "Presence checked; values hidden"
+report_footer
+
 aca_authenticate_with_circleci_oidc
 
 echo "PREFLIGHT_OIDC=PASS"
@@ -82,3 +95,13 @@ az storage blob show \
 initialize_backend_read_only
 echo "PREFLIGHT_TERRAFORM_BACKEND=PASS"
 echo "ACA_PREFLIGHT=PASS"
+
+report_header "AZURE PREFLIGHT SUMMARY"
+report_field "OIDC authentication" "PASSED"
+report_field "Azure tenant" "PASSED"
+report_field "Azure subscription" "PASSED"
+report_field "Resource group access" "PASSED"
+report_field "ACR access" "PASSED"
+report_field "Terraform backend" "READY"
+report_field "RESULT" "AZURE PREFLIGHT PASSED"
+report_footer

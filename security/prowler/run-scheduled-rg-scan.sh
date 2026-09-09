@@ -82,7 +82,7 @@ report_prowler_audit_evidence() {
     report_generated="YES"
   fi
 
-  report_header "AZURE POST-DEPLOYMENT SECURITY AUDIT"
+  report_header "AZURE SECURITY AUDIT SUMMARY"
   report_pipeline_context
   report_field "Prowler mode" "READ-ONLY"
   report_field "Scope" "Azure resource group: ${RESOURCE_GROUP}"
@@ -165,6 +165,15 @@ inventory_file="${full_directory}/azure-resource-inventory.json"
 filtered_csv="${rg_directory}/prowler-internship-proxym.csv"
 metadata_file="${rg_directory}/metadata.json"
 mkdir -p "$full_directory" "$rg_directory"
+
+report_header "DEVSECOPS PIPELINE - AZURE SECURITY AUDIT"
+report_pipeline_context
+report_field "Security engine" "Prowler"
+report_field "Mode" "Read-only Azure assessment"
+report_field "Subscription" "$subscription_name"
+report_field "Resource group" "$RESOURCE_GROUP"
+report_field "DefectDojo in this job" "$([[ "$upload_to_defectdojo" == true ]] && printf ENABLED || printf DEFERRED)"
+report_footer
 
 printf 'Prowler version: %s\n' "$("$prowler_bin" --version)"
 printf 'Azure subscription name: %s\n' "$subscription_name"

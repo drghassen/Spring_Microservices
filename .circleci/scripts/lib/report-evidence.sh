@@ -67,7 +67,16 @@ report_short_commit() {
 }
 
 report_pipeline_context() {
+  local project="${CIRCLE_PROJECT_REPONAME:-NOT AVAILABLE}"
+
+  if [[ -n "${CIRCLE_PROJECT_USERNAME:-}" && -n "${CIRCLE_PROJECT_REPONAME:-}" ]]; then
+    project="${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
+  fi
+
+  report_field "Project" "$project"
   report_field "Pipeline" "${CIRCLE_PIPELINE_NUMBER:-NOT AVAILABLE}"
+  report_field "Workflow" "${CIRCLE_WORKFLOW_ID:-NOT AVAILABLE}"
+  report_field "Job" "${CIRCLE_JOB:-NOT AVAILABLE}"
   report_field "Branch" "${CIRCLE_BRANCH:-NOT AVAILABLE}"
   report_field "Commit" "$(report_short_commit)"
 }
