@@ -16,6 +16,9 @@ spring:
     url: ${DB_URL}?sslmode=require
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 1
   jpa:
     hibernate:
       ddl-auto: validate

@@ -33,12 +33,17 @@ class ConfigServerApplicationTests {
     @Test
     void servesPostgreSqlAndMongoAcaProfilesWithoutResolvingSecrets() throws IOException {
         JsonNode gamesAca = configFor("games-service");
+        JsonNode orderAca = configFor("order-service");
+        JsonNode paymentAca = configFor("payment-service");
         JsonNode userAca = configFor("user-service");
         JsonNode libraryAca = configFor("library-service");
 
         assertThat(property(gamesAca, "spring.datasource.url")).isEqualTo("${DB_URL}?sslmode=require");
         assertThat(property(gamesAca, "spring.flyway.enabled")).isEqualTo("true");
         assertThat(property(gamesAca, "spring.jpa.hibernate.ddl-auto")).isEqualTo("validate");
+        assertBoundedPostgreSqlPool(gamesAca);
+        assertBoundedPostgreSqlPool(orderAca);
+        assertBoundedPostgreSqlPool(paymentAca);
         assertThat(property(userAca, "spring.data.mongodb.uri")).isEqualTo("${MONGO_URI}");
         assertThat(property(userAca, "spring.data.mongodb.database")).isEqualTo("users");
         assertThat(property(libraryAca, "spring.data.mongodb.database")).isEqualTo("library");
@@ -81,5 +86,10 @@ class ConfigServerApplicationTests {
         }
 
         throw new AssertionError("Missing Config Server property: " + name);
+    }
+
+    private void assertBoundedPostgreSqlPool(JsonNode environment) {
+        assertThat(property(environment, "spring.datasource.hikari.maximum-pool-size")).isEqualTo("3");
+        assertThat(property(environment, "spring.datasource.hikari.minimum-idle")).isEqualTo("1");
     }
 }
