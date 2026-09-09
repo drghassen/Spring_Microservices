@@ -279,6 +279,61 @@ test_multiline_revision_parsing() {
   [[ "${revision_details[2]}" == "example.azurecr.io/app@sha256:fixture" ]]
 }
 
+test_redeploy_accepts_active_ready_revision_after_failed_latest() {
+  local application
+  local ready_digest="sha256:$(printf 'c%.0s' {1..64})"
+  local configured_digest="sha256:$(printf 'e%.0s' {1..64})"
+  local migration_digest="sha256:$(printf 'd%.0s' {1..64})"
+  ACR_LOGIN_SERVER='fixture.azurecr.io'
+  CURRENT_APPLICATION_DIGESTS=()
+  CURRENT_MIGRATION_DIGEST=''
+
+  az() {
+    case "${1:-} ${2:-} ${3:-}" in
+      'containerapp show --name')
+        printf '%s\n%s\n%s\n' "${4}--newer-failed" "${4}--ready" \
+          "${ACR_LOGIN_SERVER}/${4}@${configured_digest}"
+        ;;
+      'containerapp revision show')
+        [[ "${9:-}" == "${5}--ready" ]] || return 1
+        printf '%s\n%s\n%s\n%s\n' \
+          true Healthy Provisioned "${ACR_LOGIN_SERVER}/${5}@${ready_digest}"
+        ;;
+      'containerapp job show')
+        printf '%s\n' "${ACR_LOGIN_SERVER}/database-migrations@${migration_digest}"
+        ;;
+      *) return 1 ;;
+    esac
+  }
+
+  load_current_healthy_release >/dev/null
+  for application in "${ACA_APPLICATIONS[@]}"; do
+    [[ "${CURRENT_APPLICATION_DIGESTS[$application]}" == "$configured_digest" ]]
+  done
+  [[ "$CURRENT_MIGRATION_DIGEST" == "$migration_digest" ]]
+}
+
+test_redeploy_rejects_inactive_ready_revision() {
+  local current_digest="sha256:$(printf 'c%.0s' {1..64})"
+  ACR_LOGIN_SERVER='fixture.azurecr.io'
+
+  az() {
+    case "${1:-} ${2:-} ${3:-}" in
+      'containerapp show --name')
+        printf '%s\n%s\n%s\n' "${4}--newer-failed" "${4}--ready" \
+          "${ACR_LOGIN_SERVER}/${4}@${current_digest}"
+        ;;
+      'containerapp revision show')
+        printf '%s\n%s\n%s\n%s\n' \
+          false Healthy Provisioned "${ACR_LOGIN_SERVER}/${5}@${current_digest}"
+        ;;
+      *) return 1 ;;
+    esac
+  }
+
+  load_current_healthy_release
+}
+
 test_post_deployment_http_checks_only() {
   local event_file
   event_file="$(mktemp)"
@@ -1376,6 +1431,8 @@ assert_fails "migration timeout stops release" mock_migration_timeout
 assert_succeeds "initial rollout retains every progressive activation set and executes migrations" test_initial_rollout
 assert_succeeds "changed migration digest executes before redeploy and all apps remain active" test_redeploy_migration_gate
 assert_succeeds "multiline Azure CLI revision details are parsed exactly" test_multiline_revision_parsing
+assert_succeeds "active ready revision survives a newer failed revision" test_redeploy_accepts_active_ready_revision_after_failed_latest
+assert_fails "inactive ready revision still blocks redeployment" test_redeploy_rejects_inactive_ready_revision
 assert_succeeds "exact ready revision with Healthy and Provisioned passes" test_revision_health_condition healthy
 assert_fails "wrong latest-ready revision does not pass" test_revision_health_condition wrong-ready
 assert_fails "Unhealthy expected revision stops release" test_revision_health_condition unhealthy

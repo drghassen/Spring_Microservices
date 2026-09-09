@@ -322,53 +322,63 @@ parse_exact_required_tsv_lines() {
 }
 
 load_current_healthy_release() {
-  local application latest_revision ready_revision health_state provisioning_state image_reference
+  local application latest_revision ready_revision active_state health_state provisioning_state
+  local configured_image_reference ready_image_reference image_reference
   local revision_names_output revision_details_output
   local -a revision_names=() revision_details=()
   for application in "${ACA_APPLICATIONS[@]}"; do
     if ! revision_names_output="$(az containerapp show \
       --name "$application" --resource-group "$ACA_RESOURCE_GROUP_NAME" \
-      --query '[properties.latestRevisionName, properties.latestReadyRevisionName]' \
+      --query '[properties.latestRevisionName, properties.latestReadyRevisionName, properties.template.containers[0].image]' \
       --output tsv --only-show-errors)"; then
       printf 'Unable to read revision names for application %s; redeployment refused.\n' \
         "$application" >&2
       exit 1
     fi
-    if ! parse_exact_required_tsv_lines 2 "$revision_names_output" revision_names; then
-      printf 'Azure returned malformed revision names for application %s; redeployment refused.\n' \
+    if ! parse_exact_required_tsv_lines 3 "$revision_names_output" revision_names; then
+      printf 'Azure returned malformed revision metadata for application %s; redeployment refused.\n' \
         "$application" >&2
       exit 1
     fi
     latest_revision="${revision_names[0]}"
     ready_revision="${revision_names[1]}"
-    [[ -n "$latest_revision" && "$latest_revision" == "$ready_revision" ]] || {
-      printf 'Application %s has no healthy latest ready revision; redeployment refused.\n' "$application" >&2
-      exit 1
-    }
+    configured_image_reference="${revision_names[2]}"
     if ! revision_details_output="$(az containerapp revision show \
       --name "$application" --resource-group "$ACA_RESOURCE_GROUP_NAME" \
-      --revision "$latest_revision" \
-      --query '[properties.healthState, properties.provisioningState, properties.template.containers[0].image]' \
+      --revision "$ready_revision" \
+      --query '[properties.active, properties.healthState, properties.provisioningState, properties.template.containers[0].image]' \
       --output tsv --only-show-errors)"; then
-      printf 'Unable to read latest revision details for application %s; redeployment refused.\n' \
+      printf 'Unable to read ready revision details for application %s; redeployment refused.\n' \
         "$application" >&2
       exit 1
     fi
-    if ! parse_exact_required_tsv_lines 3 "$revision_details_output" revision_details; then
-      printf 'Azure returned malformed latest revision details for application %s; redeployment refused.\n' \
+    if ! parse_exact_required_tsv_lines 4 "$revision_details_output" revision_details; then
+      printf 'Azure returned malformed ready revision details for application %s; redeployment refused.\n' \
         "$application" >&2
       exit 1
     fi
-    health_state="${revision_details[0]}"
-    provisioning_state="${revision_details[1]}"
-    image_reference="${revision_details[2]}"
-    [[ "$health_state" == "Healthy" && "$provisioning_state" == "Provisioned" ]] || {
-      printf 'Application %s latest revision is not healthy; redeployment refused.\n' "$application" >&2
+    active_state="${revision_details[0]}"
+    health_state="${revision_details[1]}"
+    provisioning_state="${revision_details[2]}"
+    ready_image_reference="${revision_details[3]}"
+    [[ "$active_state" == "true" && "$health_state" == "Healthy" && \
+      "$provisioning_state" == "Provisioned" ]] || {
+      printf 'Application %s ready revision %s is not active and healthy; redeployment refused.\n' \
+        "$application" "$ready_revision" >&2
       exit 1
     }
+    if [[ "$latest_revision" != "$ready_revision" ]]; then
+      printf 'Application %s uses healthy ready revision %s; newer non-ready revision %s is ignored.\n' \
+        "$application" "$ready_revision" "$latest_revision"
+    elif [[ "$configured_image_reference" != "$ready_image_reference" ]]; then
+      printf 'Application %s ready revision image does not match its configured image; redeployment refused.\n' \
+        "$application" >&2
+      exit 1
+    fi
     # The associative map is later selected by name through a nameref.
     # shellcheck disable=SC2034
-    CURRENT_APPLICATION_DIGESTS["$application"]="$(digest_from_image_reference "$application" "$image_reference")"
+    CURRENT_APPLICATION_DIGESTS["$application"]="$(digest_from_image_reference \
+      "$application" "$configured_image_reference")"
   done
   image_reference="$(az containerapp job show --name "$ACA_MIGRATIONS_JOB_NAME" \
     --resource-group "$ACA_RESOURCE_GROUP_NAME" \
