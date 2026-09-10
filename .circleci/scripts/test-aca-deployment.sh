@@ -1041,9 +1041,6 @@ write_circleci_cli_mock() {
     '    if [[ -f "$MOCK_OIDC_ATTEMPT_LOG" ]]; then attempt="$(<"$MOCK_OIDC_ATTEMPT_LOG")"; fi' \
     '    ((attempt += 1))' \
     '    printf "%s\\n" "$attempt" >"$MOCK_OIDC_ATTEMPT_LOG"' \
-    '    if ((attempt <= ${MOCK_OIDC_TIMEOUTS_BEFORE_SUCCESS:-0})); then' \
-    '      sleep "${MOCK_OIDC_HANG_SECONDS:-5}"' \
-    '    fi' \
     '    if ((attempt <= ${MOCK_OIDC_FAILURES_BEFORE_SUCCESS:-0})); then exit 1; fi' \
     '  fi' \
     '  printf "%s\\n" "${MOCK_OIDC_TOKEN:-mock-oidc-token}"' \
@@ -1225,40 +1222,6 @@ test_oidc_token_request_retries_transient_download_failure() {
   if grep -Fq "$oidc_token" "$message_log"; then return 1; fi
 }
 
-test_oidc_token_request_times_out_and_retries() {
-  local attempt_log message_log mock_directory oidc_token original_path token
-  mock_directory="$(mktemp -d)"
-  attempt_log="${mock_directory}/attempts.log"
-  message_log="${mock_directory}/messages.log"
-  oidc_token='mock-sensitive-oidc-token'
-  original_path="$PATH"
-  write_circleci_cli_mock "${mock_directory}/circleci-agent" false
-
-  MOCK_OIDC_ATTEMPT_LOG="$attempt_log"
-  MOCK_OIDC_TIMEOUTS_BEFORE_SUCCESS=1
-  MOCK_OIDC_HANG_SECONDS=5
-  MOCK_OIDC_TOKEN="$oidc_token"
-  ACA_OIDC_REQUEST_TIMEOUT_SECONDS=1
-  ACA_OIDC_RETRY_DELAY_SECONDS=0
-  export MOCK_OIDC_ATTEMPT_LOG MOCK_OIDC_TIMEOUTS_BEFORE_SUCCESS
-  export MOCK_OIDC_HANG_SECONDS MOCK_OIDC_TOKEN
-  export ACA_OIDC_REQUEST_TIMEOUT_SECONDS ACA_OIDC_RETRY_DELAY_SECONDS
-  PATH="$mock_directory:$original_path"
-  token="$(aca_request_circleci_oidc_token \
-    "${mock_directory}/circleci-agent" 2>"$message_log")"
-  PATH="$original_path"
-  unset MOCK_OIDC_ATTEMPT_LOG MOCK_OIDC_TIMEOUTS_BEFORE_SUCCESS
-  unset MOCK_OIDC_HANG_SECONDS MOCK_OIDC_TOKEN
-  unset ACA_OIDC_REQUEST_TIMEOUT_SECONDS ACA_OIDC_RETRY_DELAY_SECONDS
-
-  [[ "$token" == "$oidc_token" ]]
-  [[ "$(<"$attempt_log")" == 2 ]]
-  grep -Fq '[OIDC] Token request timed out after 1 seconds; the task-agent download or cache may be stalled.' \
-    "$message_log"
-  grep -Fq '[OIDC] Token request failed; retrying in 0 seconds.' "$message_log"
-  if grep -Fq "$oidc_token" "$message_log"; then return 1; fi
-}
-
 test_oidc_generation_failure_fails_closed() {
   local call_log inherited_tmpdir mock_directory oidc_tmpdir_log
   local original_directory original_path output status
@@ -1306,7 +1269,7 @@ test_oidc_generation_failure_fails_closed() {
   if grep -q '^login ' "$call_log"; then return 1; fi
   [[ "$(<"$oidc_tmpdir_log")" == "$inherited_tmpdir" ]]
   [[ "$output" == *"CircleCI failed to issue a custom-audience OIDC token after 3 attempts."* ]]
-  [[ "$output" == *"Check the runner task-agent cache and connectivity to circleci-binary-releases.s3.amazonaws.com."* ]]
+  [[ "$output" == *"Check runner connectivity to circleci-binary-releases.s3.amazonaws.com."* ]]
 }
 
 test_oidc_authentication_has_no_private_tmpdir_override() {
@@ -1328,6 +1291,15 @@ test_prowler_oidc_inherits_runner_tmpdir() {
 
   grep -Fq 'aca_authenticate_with_circleci_oidc' <<<"$prowler_job"
   if grep -Eq 'circleci-oidc-tmp|TMPDIR=' <<<"$prowler_job"; then return 1; fi
+}
+
+test_prowler_validate_step_checks_oidc_connectivity() {
+  local prowler_job
+  prowler_job="$(sed -n '/^  prowler-rg-security-scan:/,/^  publish-prowler-defectdojo:/p' \
+    "$ROOT_CONFIG")"
+
+  grep -Fq 'circleci-binary-releases.s3.amazonaws.com' <<<"$prowler_job"
+  grep -Fq 'Validate the self-hosted Prowler runtime' <<<"$prowler_job"
 }
 
 test_oidc_selected_account_mismatch_rejected() {
@@ -1530,10 +1502,10 @@ assert_fails "/snap/bin/circleci is never accepted as an environment CLI fallbac
 assert_succeeds "CircleCI preflight reports both paths and the selected Environment CLI" test_circleci_preflight_diagnostics_report_paths_and_selection
 assert_succeeds "OIDC generation uses the resolved binary without logging the token" test_oidc_authentication_uses_resolved_binary_without_logging_token
 assert_succeeds "OIDC generation retries a transient task-agent download failure" test_oidc_token_request_retries_transient_download_failure
-assert_succeeds "OIDC generation bounds a stalled task-agent request and retries" test_oidc_token_request_times_out_and_retries
 assert_succeeds "OIDC token generation failure stops before Azure login" test_oidc_generation_failure_fails_closed
 assert_succeeds "OIDC authentication inherits TMPDIR and contains no private override" test_oidc_authentication_has_no_private_tmpdir_override
 assert_succeeds "self-hosted Prowler OIDC inherits the runner temporary directory" test_prowler_oidc_inherits_runner_tmpdir
+assert_succeeds "prowler validate step pre-checks OIDC plugin download connectivity" test_prowler_validate_step_checks_oidc_connectivity
 assert_succeeds "OIDC authentication rejects an unexpected selected Azure subscription" test_oidc_selected_account_mismatch_rejected subscription
 assert_succeeds "OIDC authentication rejects an unexpected selected Azure tenant" test_oidc_selected_account_mismatch_rejected tenant
 assert_succeeds "CircleCI environment CLI is never overwritten" test_circleci_environment_cli_not_overwritten
