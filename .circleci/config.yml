@@ -201,6 +201,17 @@ jobs:
 
             source .circleci/scripts/lib/aca-deployment.sh
             aca_require_circleci_environment_cli
+
+            oidc_releases_url='https://circleci-binary-releases.s3.amazonaws.com/'
+            printf 'Checking OIDC plugin download connectivity: %s\n' "$oidc_releases_url"
+            if ! curl --max-time 15 --retry 2 --retry-all-errors \
+                -sf -o /dev/null "$oidc_releases_url"; then
+              printf 'Runner cannot reach %s.\n' "$oidc_releases_url" >&2
+              printf 'The circleci-agent OIDC plugin cannot be downloaded.\n' >&2
+              printf 'Ensure the runner has outbound HTTPS access to circleci-binary-releases.s3.amazonaws.com.\n' >&2
+              exit 1
+            fi
+            printf 'OIDC plugin download connectivity: OK\n'
       - run:
           name: Report evidence - Prowler audit and validated workspace bundle
           command: |
