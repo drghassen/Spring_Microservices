@@ -144,24 +144,43 @@ aca_request_circleci_oidc_token() {
   local candidate_token
   local attempt
   local max_attempts=3
+  local request_status
   local retry_delay_seconds="${ACA_OIDC_RETRY_DELAY_SECONDS:-3}"
+  local request_timeout_seconds="${ACA_OIDC_REQUEST_TIMEOUT_SECONDS:-90}"
 
   [[ "$retry_delay_seconds" =~ ^[0-9]+$ ]] || {
     echo "ACA_OIDC_RETRY_DELAY_SECONDS must be a non-negative integer." >&2
+    return 1
+  }
+  [[ "$request_timeout_seconds" =~ ^[1-9][0-9]*$ ]] || {
+    echo "ACA_OIDC_REQUEST_TIMEOUT_SECONDS must be a positive integer." >&2
+    return 1
+  }
+  command -v timeout >/dev/null 2>&1 || {
+    echo "The timeout command is required for bounded CircleCI OIDC requests." >&2
     return 1
   }
 
   for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
     printf '[OIDC] Requesting CircleCI custom-audience token (attempt %s/%s)...\n' \
       "$attempt" "$max_attempts" >&2
+    request_status=0
     if candidate_token="$(
-      "$circleci_environment_cli" run oidc get \
-        --claims '{"aud":"api://AzureADTokenExchange"}'
+      timeout --signal=TERM --kill-after=10s "${request_timeout_seconds}s" \
+        "$circleci_environment_cli" run oidc get \
+          --claims '{"aud":"api://AzureADTokenExchange"}'
     )"; then
       printf '%s\n' "$candidate_token"
       return 0
+    else
+      request_status=$?
     fi
     unset candidate_token
+
+    if ((request_status == 124 || request_status == 137)); then
+      printf '[OIDC] Token request timed out after %s seconds; the task-agent download or cache may be stalled.\n' \
+        "$request_timeout_seconds" >&2
+    fi
 
     if ((attempt < max_attempts)); then
       printf '[OIDC] Token request failed; retrying in %s seconds.\n' \
@@ -171,7 +190,7 @@ aca_request_circleci_oidc_token() {
   done
 
   echo "[OIDC] ERROR: CircleCI failed to issue a custom-audience OIDC token after ${max_attempts} attempts." >&2
-  echo "[OIDC] Check runner connectivity to circleci-binary-releases.s3.amazonaws.com." >&2
+  echo "[OIDC] Check the runner task-agent cache and connectivity to circleci-binary-releases.s3.amazonaws.com." >&2
   return 1
 }
 
